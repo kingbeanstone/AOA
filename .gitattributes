@@ -1,0 +1,12 @@
+# Auto detect text files
+* text=auto
+
+# Windows batch files: force CRLF
+*.bat text eol=crlf
+
+# Shell scripts: force LF
+*.sh text eol=lf
+
+# Python / Markdown: force LF
+*.py text eol=lf
+*.md text eol=lf
