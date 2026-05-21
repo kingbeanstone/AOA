@@ -21,7 +21,7 @@ import re
 import sys
 from datetime import datetime as _dt
 
-__version__ = "1.0"
+__version__ = "1.1"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -350,8 +350,71 @@ def extract_vm_traces(path: str) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# logcat 태그 추출 및 연속 동일 태그 압축 (공통 유틸)
+# ──────────────────────────────────────────────────────────────────────────────
+# logcat 형식:
+#   기본:        "MM-DD HH:MM:SS.mmm  PID  TID  LEVEL Tag : message"
+#   dumpstate:   "MM-DD HH:MM:SS.mmm  UID  PID  TID  LEVEL Tag : message"
+_LOGCAT_TAG_RE = re.compile(
+    r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+\s+"
+    r"(?:\d+\s+){2,3}"          # PID TID 또는 UID PID TID
+    r"[VDIWEF]\s+"
+    r"(\S+?)\s*:"
+)
+
+
+def _logcat_tag(line: str):
+    """logcat 라인에서 태그 추출. 실패 시 None."""
+    m = _LOGCAT_TAG_RE.match(line)
+    return m.group(1) if m else None
+
+
+def _tag_group(tag: str) -> str:
+    """점이 있으면 첫 점 앞 prefix + ".*" 로 그룹화."""
+    if "." in tag:
+        return tag.split(".", 1)[0] + ".*"
+    return tag
+
+
+def _collapse_consecutive_same_tag(lines, keep_head: int = 1):
+    """같은 태그 그룹이 연속되는 구간을 압축한다.
+    앞 keep_head 건 + "… [Group] × N건 압축" + 마지막 1건 = 최대 3줄.
+    3건 미만이면 그대로 출력. 태그 추출 실패 라인은 압축 제외.
+    """
+    if not lines:
+        return lines
+    out = []
+    i, n = 0, len(lines)
+    while i < n:
+        tag_i = _logcat_tag(lines[i])
+        if tag_i is None:
+            out.append(lines[i])
+            i += 1
+            continue
+        group_i = _tag_group(tag_i)
+        j = i + 1
+        while j < n:
+            tag_j = _logcat_tag(lines[j])
+            if tag_j is None or _tag_group(tag_j) != group_i:
+                break
+            j += 1
+        run = lines[i:j]
+        if len(run) >= keep_head + 2:
+            out.extend(run[:keep_head])
+            collapsed = len(run) - keep_head - 1
+            out.append(f"  … [{group_i}] × {collapsed}건 압축")
+            out.append(run[-1])
+        else:
+            out.extend(run)
+        i = j
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # [4] ANR 발생 시점 부근 logcat 키워드
 # ──────────────────────────────────────────────────────────────────────────────
+# MainThread/Lock/Binder 카테고리는 [2][3] 섹션이 더 정확하므로 제외.
+# GC/System/Render/IO 4개 카테고리만 유지.
 _GC_KW     = ["WaitForGcToComplete blocked",
               "Starting a blocking GC",
                "Throwing OutOfMemoryError",
@@ -402,14 +465,15 @@ _IO_KW = [
 ]
 
 def extract_logcat_window(path: str, window_before: int = 120, window_after: int = 10) -> str:
-    """ANR 시점 ±window 범위 logcat에서 GC/System/Render/IO 키워드 수집."""
+    """ANR 시점 ±window 범위 logcat에서 GC/System/Render/IO 키워드 수집.
+    각 카테고리 내 연속 동일 태그는 _collapse_consecutive_same_tag()로 압축."""
     anr_ts = None
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             if " am_anr" in line:
                 ts = _logcat_ts(line)
                 if ts is not None:
-                    anr_ts = ts
+                    anr_ts = ts  # break 없이 계속 갱신 → 마지막 값 유지
 
     t_start = (anr_ts - window_before) if anr_ts else None
     t_end   = (anr_ts + window_after)  if anr_ts else None
@@ -450,7 +514,7 @@ def extract_logcat_window(path: str, window_before: int = 120, window_after: int
         if lines:
             has_any = True
             parts.append(f"\n[{cat}]")
-            parts.extend(lines)
+            parts.extend(_collapse_consecutive_same_tag(lines))  # 연속 동일 태그 압축
 
     if not has_any:
         parts.append("(해당 키워드 없음)")
@@ -461,56 +525,10 @@ def extract_logcat_window(path: str, window_before: int = 120, window_after: int
 # ──────────────────────────────────────────────────────────────────────────────
 # [5] freeze 추정 시각 기준 사전 패키지 로그
 # ──────────────────────────────────────────────────────────────────────────────
-_LOGCAT_TAG_RE = re.compile(
-    r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+\s+"
-    r"(?:\d+\s+){2,3}"
-    r"[VDIWEF]\s+"
-    r"(\S+?)\s*:"
-)
-
-
-def _logcat_tag(line: str):
-    m = _LOGCAT_TAG_RE.match(line)
-    return m.group(1) if m else None
-
-
-def _tag_group(tag: str) -> str:
-    if "." in tag:
-        return tag.split(".", 1)[0] + ".*"
-    return tag
-
-
-def _collapse_consecutive_same_tag(lines, keep_head: int = 1):
-    if not lines:
-        return lines
-    out = []
-    i, n = 0, len(lines)
-    while i < n:
-        tag_i = _logcat_tag(lines[i])
-        if tag_i is None:
-            out.append(lines[i])
-            i += 1
-            continue
-        group_i = _tag_group(tag_i)
-        j = i + 1
-        while j < n:
-            tag_j = _logcat_tag(lines[j])
-            if tag_j is None or _tag_group(tag_j) != group_i:
-                break
-            j += 1
-        run = lines[i:j]
-        if len(run) >= keep_head + 2:
-            out.extend(run[:keep_head])
-            collapsed = len(run) - keep_head - 1
-            out.append(f"  … [{group_i}] × {collapsed}건 압축")
-            out.append(run[-1])
-        else:
-            out.extend(run)
-        i = j
-    return out
-
 
 def extract_pre_freeze_log(path: str, lookback: int = 30) -> str:
+    """freeze 추정 시각 기준 lookback초 전부터 freeze 시점까지,
+    ANR 발생 패키지명이 등장하는 라인만 시간순으로 추출."""
     pid, proc = _last_anr_info(path)
     if proc is None:
         return "(ANR 프로세스 정보 없음)"
@@ -567,6 +585,7 @@ def extract_pre_freeze_log(path: str, lookback: int = 30) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 # [6] Crash 기록 — Java crash + native crash + TOMBSTONE 섹션
 # ──────────────────────────────────────────────────────────────────────────────
+
 _JAVA_TRACE_CONT = re.compile(
     r"^\s*(at\s+\S|Caused by:|\.{3}\s+\d+\s+more|Suppressed:|"
     r"\$?[A-Za-z_][\w.$]*(Exception|Error|Throwable):)"
@@ -574,6 +593,7 @@ _JAVA_TRACE_CONT = re.compile(
 
 
 def _rel_to_anr(ts, anr_ts):
+    """crash 타임스탬프와 ANR 시각의 상대 시간 문자열. ts/anr_ts 없으면 ''."""
     if ts is None or anr_ts is None:
         return ""
     d = ts - anr_ts
@@ -582,6 +602,8 @@ def _rel_to_anr(ts, anr_ts):
 
 
 def _extract_java_crashes(path, anr_ts):
+    """logcat 의 FATAL EXCEPTION 블록을 스택 트레이스째 추출.
+    반환: [(ts, tstr, kind, block, lineno, proc), ...]"""
     out = []
     with open(path, encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
@@ -627,6 +649,8 @@ def _extract_java_crashes(path, anr_ts):
 
 
 def _extract_native_crashes(path, anr_ts):
+    """libc/DEBUG 의 Fatal signal + *** *** 경계 + backtrace 추출.
+    반환: [(ts, tstr, kind, block, lineno, proc), ...]"""
     out = []
     with open(path, encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
@@ -673,6 +697,8 @@ def _extract_native_crashes(path, anr_ts):
 
 
 def _extract_tombstones(path):
+    """dumpstate 의 ------ TOMBSTONE ------ 섹션에서 핵심부만 추출.
+    반환: [(ts, tstr, kind, block, lineno, proc), ...]"""
     out = []
     with open(path, encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
@@ -715,6 +741,8 @@ def _extract_tombstones(path):
 
 
 def extract_crash_records(path: str) -> str:
+    """파일 전체에서 Java/native crash + TOMBSTONE 을 모두 수집.
+    출력: ANR 패키지 관련 + 최근 1건을 상세, 나머지는 인덱스 한 줄씩."""
     anr_ts = None
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
