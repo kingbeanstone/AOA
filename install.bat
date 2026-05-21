@@ -4,6 +4,7 @@ setlocal enabledelayedexpansion
 
 REM ============================================================
 REM   ANR 분석 도구 설치 스크립트 (Windows)
+REM   - GitHub에서 최신 파일 자동 다운로드 (실패 시 로컬 payload\ 폴백)
 REM   - 글로벌 룰을 Cline 룰 폴더에 복사
 REM   - anr_parse.py 를 %USERPROFILE%\.anr-tool\ 에 복사
 REM ============================================================
@@ -14,8 +15,32 @@ echo   ANR 분석 도구 설치
 echo ============================================================
 echo.
 
-REM --- 0. Python 확인 ----------------------------------------
-echo [0/3] Python 확인 중...
+REM --- 설정 --------------------------------------------------
+set "REPO=kingbeanstone/aoa2"
+set "BRANCH=main"
+set "DL_URL=https://github.com/%REPO%/archive/refs/heads/%BRANCH%.zip"
+set "TMP_ZIP=%TEMP%\anr-tool-latest.zip"
+set "TMP_DIR=%TEMP%\anr-tool-latest"
+set "PARSER_VER=1.1"
+set "RULE_VER=1.1"
+set "RULES_DIR=%USERPROFILE%\Documents\Cline\Rules"
+set "TOOL_DIR=%USERPROFILE%\.anr-tool"
+
+REM --- 0. GitHub 최신 버전 다운로드 -------------------------
+echo [0/4] GitHub에서 최신 버전 다운로드 중...
+curl -fsSL "%DL_URL%" -o "%TMP_ZIP%" >nul 2>&1
+if !errorlevel!==0 (
+    powershell -Command "Expand-Archive -Path '%TMP_ZIP%' -DestinationPath '%TMP_DIR%' -Force" >nul 2>&1
+    set "PAYLOAD=%TMP_DIR%\aoa2-%BRANCH%\payload"
+    echo       OK: GitHub 최신 버전 다운로드 완료
+) else (
+    echo       GitHub 연결 실패 -- 로컬 파일로 설치합니다.
+    set "PAYLOAD=%~dp0payload"
+)
+echo.
+
+REM --- 1. Python 확인 ----------------------------------------
+echo [1/4] Python 확인 중...
 where py >nul 2>&1
 if %errorlevel%==0 (
     echo       OK: py 명령 사용 가능
@@ -31,34 +56,27 @@ if %errorlevel%==0 (
 )
 echo.
 
-REM --- 1. 버전 정보 ------------------------------------------
-set "PARSER_VER=1.1"
-set "RULE_VER=1.1"
-
-REM --- 2. 대상 폴더 경로 -------------------------------------
-set "RULES_DIR=%USERPROFILE%\Documents\Cline\Rules"
-set "TOOL_DIR=%USERPROFILE%\.anr-tool"
-
-REM --- 3. 폴더 생성 ------------------------------------------
-echo [1/3] 설치 폴더 준비
+REM --- 2. 대상 폴더 생성 -------------------------------------
+echo [2/4] 설치 폴더 준비
 echo       Rules: %RULES_DIR%
 echo       Tool : %TOOL_DIR%
 if not exist "%RULES_DIR%" mkdir "%RULES_DIR%"
 if not exist "%TOOL_DIR%"  mkdir "%TOOL_DIR%"
 echo.
 
-REM --- 4. payload 파일 위치 확인 -----------------------------
-set "PAYLOAD=%~dp0payload"
+REM --- payload 파일 위치 확인 --------------------------------
 if not exist "%PAYLOAD%\zz-anr-rule.md" (
     echo [오류] payload 폴더에서 룰 파일을 찾을 수 없습니다.
     echo        경로: %PAYLOAD%
-    echo        설치 패키지가 손상되었거나 압축 해제가 잘못된 것 같습니다.
+    echo        GitHub 연결에 실패한 경우 payload\ 폴더가 install.bat과 같은 위치에 있는지 확인하세요.
+    if exist "%TMP_ZIP%" del /q "%TMP_ZIP%" >nul 2>&1
+    if exist "%TMP_DIR%" rd /s /q "%TMP_DIR%" >nul 2>&1
     pause
     exit /b 1
 )
 
-REM --- 5. 파일 복사 ------------------------------------------
-echo [2/3] 글로벌 룰 복사  ^(v%RULE_VER%^)
+REM --- 3. 파일 복사 ------------------------------------------
+echo [3/4] 글로벌 룰 복사  ^(v%RULE_VER%^)
 copy /Y "%PAYLOAD%\zz-anr-rule.md" "%RULES_DIR%\zz-anr-rule.md" >nul
 if !errorlevel! neq 0 (
     echo       실패. Documents 폴더에 쓰기 권한이 있는지 확인하세요.
@@ -68,7 +86,7 @@ if !errorlevel! neq 0 (
 echo       OK
 echo.
 
-echo [3/3] 파서 스크립트 복사  ^(v%PARSER_VER%^)
+echo [4/4] 파서 스크립트 복사  ^(v%PARSER_VER%^)
 copy /Y "%PAYLOAD%\anr_parse.py" "%TOOL_DIR%\anr_parse.py" >nul
 if !errorlevel! neq 0 (
     echo       실패.
@@ -78,7 +96,11 @@ if !errorlevel! neq 0 (
 echo       OK
 echo.
 
-REM --- 6. 완료 메시지 ----------------------------------------
+REM --- 임시 파일 정리 ----------------------------------------
+if exist "%TMP_ZIP%" del /q "%TMP_ZIP%" >nul 2>&1
+if exist "%TMP_DIR%" rd /s /q "%TMP_DIR%" >nul 2>&1
+
+REM --- 완료 메시지 -------------------------------------------
 echo ============================================================
 echo   설치 완료
 echo ============================================================
