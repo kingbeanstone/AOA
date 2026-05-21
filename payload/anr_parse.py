@@ -195,16 +195,21 @@ def extract_vm_traces(path: str) -> str:
                     continue
                 blocks_by_pid.setdefault(current_pid, []).append(s)
 
-    # CPU 과부하로 tombstoned 응답 없을 때 발생하는 덤프 실패 감지.
-    # 실패한 PID 블록에는 libdebuggerd_client 오류 뒤 Waiting Channels /
-    # 불완전한 native 프레임이 섞여 있으므로 블록을 모두 제거한다.
+    # CPU 과부하 시 덤프 실패 패턴 두 가지를 모두 감지:
+    #   1. libdebuggerd_client: failed  →  tombstoned 타임아웃
+    #   2. "sysTid=" 형식 스레드만 있고 Java "tid=" 없음  →  Waiting Channels 폴백
+    # 해당 블록은 Waiting Channels / 불완전한 native 프레임만 담고 있어
+    # 스택 분석에 쓸 수 없으므로 제거한다.
     failed_dump_pids = set()
+    _java_tid_re = re.compile(r'"[^"]*".*\btid=\d+')
+    _sys_tid_re  = re.compile(r'"[^"]*".*\bsysTid=\d+')
     for blk_pid, blk_lines in list(blocks_by_pid.items()):
-        for l in blk_lines:
-            if "libdebuggerd_client: failed" in l:
-                failed_dump_pids.add(blk_pid)
-                blocks_by_pid[blk_pid] = []
-                break
+        tombstone_failed = any("libdebuggerd_client: failed" in l for l in blk_lines)
+        has_java_tid = any(_java_tid_re.search(l) for l in blk_lines)
+        has_sys_tid  = any(_sys_tid_re.search(l) for l in blk_lines)
+        if tombstone_failed or (has_sys_tid and not has_java_tid):
+            failed_dump_pids.add(blk_pid)
+            blocks_by_pid[blk_pid] = []
 
     def _failed_note(blk_pid):
         cmd = pid_to_cmd.get(blk_pid, "?")
