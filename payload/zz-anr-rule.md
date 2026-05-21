@@ -1,4 +1,4 @@
-<!-- 버전: 1.0 -->
+<!-- 버전: 1.1 -->
 # ANR 덤프 분석 — 글로벌 룰
 
 이 룰은 안드로이드 ANR 덤프(dumpstate) 파일 분석 요청을 처리하기 위한
@@ -11,9 +11,12 @@
 다음 중 하나에 해당하면 이 룰을 적용한다:
 
 - 사용자가 덤프 파일(dumpstate, ANR 로그 등) 경로를 주며 "분석",
-  "ANR 봐줘", "원인 찾아줘" 등을 요청
+  "ANR 봐줘", "원인 찾아줘", "anr" 등을 요청
 - 파일명에 `dumpstate`, `anr`, `bugreport` 등이 포함되어 있고
   분석 의도가 명확한 경우
+- **경로 뒤에 "anr" 키워드만 붙여 입력해도 분석 시작** (가장 간단한 사용법):
+  - Windows: `C:\path\to\dumpstate.txt anr`
+  - Linux / macOS / WSL: `/home/user/dumpstate.txt anr`
 
 위 조건에 해당하지 않으면 이 룰은 무시한다 (일반 작업 방해 금지).
 
@@ -137,7 +140,7 @@ python3 "$HOME/.anr-tool/anr_parse.py" "<덤프경로>"
 ```
 <am_anr 로그 원문을 그대로 1줄 인용. 없으면 "am_anr 로그 없음" 명시>
 ```
-예시: `I am_anr  ( 1234): 0,12345,com.example.app,1001,Input dispatching timed out,5000`
+예시: `04-14 10:37:42.950  1000  4401 24946 I am_anr  ( 4401): [0,24946,com.example.app,1001,Input dispatching timed out,5000]`
 
 확인 불가 항목은 "확인 불가"로 표시.
 

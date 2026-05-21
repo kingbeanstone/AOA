@@ -3,7 +3,7 @@ chcp 65001 > nul
 setlocal enabledelayedexpansion
 
 REM ============================================================
-REM   ANR 분석 도구 설치 스크립트
+REM   ANR 분석 도구 설치 스크립트 (Windows)
 REM   - 글로벌 룰을 Cline 룰 폴더에 복사
 REM   - anr_parse.py 를 %USERPROFILE%\.anr-tool\ 에 복사
 REM ============================================================
@@ -32,8 +32,8 @@ if %errorlevel%==0 (
 echo.
 
 REM --- 1. 버전 정보 ------------------------------------------
-set "PARSER_VER=1.0"
-set "RULE_VER=1.0"
+set "PARSER_VER=1.1"
+set "RULE_VER=1.1"
 
 REM --- 2. 대상 폴더 경로 -------------------------------------
 set "RULES_DIR=%USERPROFILE%\Documents\Cline\Rules"
@@ -89,9 +89,9 @@ echo   룰    : zz-anr-rule.md    v%RULE_VER%
 echo.
 echo 사용 방법:
 echo   1. VSCode 를 실행 ^(또는 재시작^)
-echo   2. Cline 채팅창에 ANR 덤프 파일 경로를 알려주세요:
-echo      예^) "C:\path\to\dump.txt 분석해줘"
-echo      예^) "이 ANR 덤프 좀 봐줘: C:\dump.txt"
+echo   2. Cline 채팅창에 경로 + "anr" 입력 후 Enter:
+echo      예^) C:\path\to\dumpstate.txt anr
+echo      예^) "C:\My Logs\dump.txt" anr
 echo.
 echo 설치된 위치:
 echo   글로벌 룰    : %RULES_DIR%\zz-anr-rule.md

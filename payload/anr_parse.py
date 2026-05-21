@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 anr_parse.py
-dumpstate 파일에서 ANR 관련 4개 섹션을 추출해 텍스트 파일로 저장.
+dumpstate 파일에서 ANR 관련 섹션을 추출해 텍스트 파일로 저장.
 
 사용법:
   python anr_parse.py <dumpstate_path>
@@ -12,14 +12,18 @@ dumpstate 파일에서 ANR 관련 4개 섹션을 추출해 텍스트 파일로 �
   [2] ANR in       — ActivityManager ANR 헤더 + CPU 사용량 + PSI 메모리
   [3] VM traces    — VM TRACES AT LAST ANR 스레드 덤프
   [4] 부근 logcat  — ANR 발생 시점 -120s ~ +10s 키워드 (GC / System / Render / IO)
+  [5] freeze 이전  — freeze 추정 시각 기준 패키지 로그
+  [6] Crash 기록   — Java / native crash / TOMBSTONE
 
 외부 라이브러리 불필요 (표준 라이브러리만 사용).
+Python 3.8 이상 호환.
 """
 
 import os
 import re
 import sys
 from datetime import datetime as _dt
+from typing import Optional
 
 __version__ = "1.1"
 
@@ -46,9 +50,7 @@ def _logcat_ts(line: str):
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _last_anr_info(path: str):
-    """마지막 am_anr 이벤트에서 (pid, process_name) 반환. 없으면 (None, None).
-    am_anr 포맷: [user_id,pid,process_name,flags,reason]
-    """
+    """마지막 am_anr 이벤트에서 (pid, process_name) 반환. 없으면 (None, None)."""
     pid, proc = None, None
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
@@ -129,7 +131,7 @@ def extract_anr_in(path: str) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def extract_vm_traces(path: str) -> str:
-    """VM TRACES: ANR 프로세스 + 관련(같은 패키지) 프로세스의 main 스레드 +
+    """VM TRACES: ANR 프로세스 + 관련 프로세스의 main 스레드 +
     락 체인 / 락 경합 / GC 압박 / 컴포넌트 콜백 스레드만 추출."""
     pid, proc = _last_anr_info(path)
 
@@ -352,35 +354,27 @@ def extract_vm_traces(path: str) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 # logcat 태그 추출 및 연속 동일 태그 압축 (공통 유틸)
 # ──────────────────────────────────────────────────────────────────────────────
-# logcat 형식:
-#   기본:        "MM-DD HH:MM:SS.mmm  PID  TID  LEVEL Tag : message"
-#   dumpstate:   "MM-DD HH:MM:SS.mmm  UID  PID  TID  LEVEL Tag : message"
 _LOGCAT_TAG_RE = re.compile(
     r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+\s+"
-    r"(?:\d+\s+){2,3}"          # PID TID 또는 UID PID TID
+    r"(?:\d+\s+){2,3}"
     r"[VDIWEF]\s+"
     r"(\S+?)\s*:"
 )
 
 
 def _logcat_tag(line: str):
-    """logcat 라인에서 태그 추출. 실패 시 None."""
     m = _LOGCAT_TAG_RE.match(line)
     return m.group(1) if m else None
 
 
 def _tag_group(tag: str) -> str:
-    """점이 있으면 첫 점 앞 prefix + ".*" 로 그룹화."""
     if "." in tag:
         return tag.split(".", 1)[0] + ".*"
     return tag
 
 
 def _collapse_consecutive_same_tag(lines, keep_head: int = 1):
-    """같은 태그 그룹이 연속되는 구간을 압축한다.
-    앞 keep_head 건 + "… [Group] × N건 압축" + 마지막 1건 = 최대 3줄.
-    3건 미만이면 그대로 출력. 태그 추출 실패 라인은 압축 제외.
-    """
+    """같은 태그 그룹 연속 구간 압축. 앞 1줄 + 압축 표시 + 마지막 1줄."""
     if not lines:
         return lines
     out = []
@@ -413,67 +407,38 @@ def _collapse_consecutive_same_tag(lines, keep_head: int = 1):
 # ──────────────────────────────────────────────────────────────────────────────
 # [4] ANR 발생 시점 부근 logcat 키워드
 # ──────────────────────────────────────────────────────────────────────────────
-# MainThread/Lock/Binder 카테고리는 [2][3] 섹션이 더 정확하므로 제외.
-# GC/System/Render/IO 4개 카테고리만 유지.
-_GC_KW     = ["WaitForGcToComplete blocked",
-              "Starting a blocking GC",
-               "Throwing OutOfMemoryError",
-               "Clamp target GC heap",
-               "Forcing collection of SoftReferences",
-                "GC_FOR_ALLOC",
-                "GC concurrent",
-                "Explicit concurrent mark sweep GC",
-                "Background concurrent copying GC",
-                "Suspending all threads",
-                "OutOfMemoryError",
-                "Failed to allocate",
-                "Trim memory",]
+_GC_KW = [
+    "WaitForGcToComplete blocked", "Starting a blocking GC",
+    "Throwing OutOfMemoryError", "Clamp target GC heap",
+    "Forcing collection of SoftReferences", "GC_FOR_ALLOC",
+    "GC concurrent", "Explicit concurrent mark sweep GC",
+    "Background concurrent copying GC", "Suspending all threads",
+    "OutOfMemoryError", "Failed to allocate", "Trim memory",
+]
 _SYSTEM_KW = [
-    "lowmemorykiller",
-    "lmkd",
-    "Kill '",
-    "freeze ",
-    "unfreeze ",
-    "Freezer",
-    "cpu starvation",
-    "sched",
-    "task stalled",
-    "hung task",
+    "lowmemorykiller", "lmkd", "Kill '", "freeze ", "unfreeze ",
+    "Freezer", "cpu starvation", "sched", "task stalled", "hung task",
 ]
 _RENDER_KW = [
-    "SurfaceFlinger",
-    "BufferQueue",
-    "dequeueBuffer",
-    "queueBuffer",
-    "EGL",
-    "OpenGLRenderer",
-    "HWUI",
-    "FrameMissed",
-    "jank",
-    "RenderThread",
+    "SurfaceFlinger", "BufferQueue", "dequeueBuffer", "queueBuffer",
+    "EGL", "OpenGLRenderer", "HWUI", "FrameMissed", "jank", "RenderThread",
 ]
 _IO_KW = [
-    "I/O error",
-    "Slow operation",
-    "fsync",
-    "storage",
-    "SQLite",
-    "database is locked",
-    "disk full",
-    "read blocked",
-    "write blocked",
+    "I/O error", "Slow operation", "fsync", "storage", "SQLite",
+    "database is locked", "disk full", "read blocked", "write blocked",
 ]
+
 
 def extract_logcat_window(path: str, window_before: int = 120, window_after: int = 10) -> str:
     """ANR 시점 ±window 범위 logcat에서 GC/System/Render/IO 키워드 수집.
-    각 카테고리 내 연속 동일 태그는 _collapse_consecutive_same_tag()로 압축."""
+    각 카테고리 내 연속 동일 태그는 압축."""
     anr_ts = None
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             if " am_anr" in line:
                 ts = _logcat_ts(line)
                 if ts is not None:
-                    anr_ts = ts  # break 없이 계속 갱신 → 마지막 값 유지
+                    anr_ts = ts
 
     t_start = (anr_ts - window_before) if anr_ts else None
     t_end   = (anr_ts + window_after)  if anr_ts else None
@@ -514,7 +479,7 @@ def extract_logcat_window(path: str, window_before: int = 120, window_after: int
         if lines:
             has_any = True
             parts.append(f"\n[{cat}]")
-            parts.extend(_collapse_consecutive_same_tag(lines))  # 연속 동일 태그 압축
+            parts.extend(_collapse_consecutive_same_tag(lines))
 
     if not has_any:
         parts.append("(해당 키워드 없음)")
@@ -527,8 +492,7 @@ def extract_logcat_window(path: str, window_before: int = 120, window_after: int
 # ──────────────────────────────────────────────────────────────────────────────
 
 def extract_pre_freeze_log(path: str, lookback: int = 30) -> str:
-    """freeze 추정 시각 기준 lookback초 전부터 freeze 시점까지,
-    ANR 발생 패키지명이 등장하는 라인만 시간순으로 추출."""
+    """freeze 추정 시각 기준 lookback초 전부터 freeze 시점까지 패키지 로그 추출."""
     pid, proc = _last_anr_info(path)
     if proc is None:
         return "(ANR 프로세스 정보 없음)"
@@ -553,10 +517,10 @@ def extract_pre_freeze_log(path: str, lookback: int = 30) -> str:
     if anr_ts is None:
         return "(ANR 타임스탬프 추출 실패)"
 
-    delay_s  = delay_ms / 1000.0
+    delay_s   = delay_ms / 1000.0
     freeze_ts = anr_ts - delay_s
-    t_start  = freeze_ts - lookback
-    t_end    = freeze_ts
+    t_start   = freeze_ts - lookback
+    t_end     = freeze_ts
 
     out_lines = []
     with open(path, encoding="utf-8", errors="replace") as f:
@@ -593,7 +557,6 @@ _JAVA_TRACE_CONT = re.compile(
 
 
 def _rel_to_anr(ts, anr_ts):
-    """crash 타임스탬프와 ANR 시각의 상대 시간 문자열. ts/anr_ts 없으면 ''."""
     if ts is None or anr_ts is None:
         return ""
     d = ts - anr_ts
@@ -602,12 +565,9 @@ def _rel_to_anr(ts, anr_ts):
 
 
 def _extract_java_crashes(path, anr_ts):
-    """logcat 의 FATAL EXCEPTION 블록을 스택 트레이스째 추출.
-    반환: [(ts, tstr, kind, block, lineno, proc), ...]"""
     out = []
     with open(path, encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
-
     i, n = 0, len(lines)
     while i < n:
         line = lines[i]
@@ -649,12 +609,9 @@ def _extract_java_crashes(path, anr_ts):
 
 
 def _extract_native_crashes(path, anr_ts):
-    """libc/DEBUG 의 Fatal signal + *** *** 경계 + backtrace 추출.
-    반환: [(ts, tstr, kind, block, lineno, proc), ...]"""
     out = []
     with open(path, encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
-
     i, n = 0, len(lines)
     while i < n:
         line = lines[i]
@@ -697,12 +654,9 @@ def _extract_native_crashes(path, anr_ts):
 
 
 def _extract_tombstones(path):
-    """dumpstate 의 ------ TOMBSTONE ------ 섹션에서 핵심부만 추출.
-    반환: [(ts, tstr, kind, block, lineno, proc), ...]"""
     out = []
     with open(path, encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
-
     i, n = 0, len(lines)
     while i < n:
         if "TOMBSTONE" not in lines[i] or not lines[i].lstrip().startswith("---"):
@@ -741,8 +695,7 @@ def _extract_tombstones(path):
 
 
 def extract_crash_records(path: str) -> str:
-    """파일 전체에서 Java/native crash + TOMBSTONE 을 모두 수집.
-    출력: ANR 패키지 관련 + 최근 1건을 상세, 나머지는 인덱스 한 줄씩."""
+    """파일 전체에서 Java/native crash + TOMBSTONE 을 모두 수집."""
     anr_ts = None
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
@@ -796,9 +749,7 @@ def extract_crash_records(path: str) -> str:
     ]
     rep_ts, rep_tstr, rep_kind, rep_block, rep_lineno, rep_proc = representative
     rel = _rel_to_anr(rep_ts, anr_ts)
-    parts.append(
-        f"[{rep_kind}]  {rep_tstr}{rel}  proc={rep_proc}  @ line {rep_lineno}"
-    )
+    parts.append(f"[{rep_kind}]  {rep_tstr}{rel}  proc={rep_proc}  @ line {rep_lineno}")
     parts.extend(rep_block)
 
     others = [c for c in crashes if c is not representative]
@@ -808,9 +759,7 @@ def extract_crash_records(path: str) -> str:
         for c in others:
             ts, tstr, kind, _, lineno, proc = c
             rel = _rel_to_anr(ts, anr_ts)
-            parts.append(
-                f"  [{kind:<9s}] {tstr}{rel}  proc={proc}  @ line {lineno}"
-            )
+            parts.append(f"  [{kind:<9s}] {tstr}{rel}  proc={proc}  @ line {lineno}")
 
     return "\n".join(parts)
 
@@ -831,7 +780,7 @@ SECTIONS = [
 SEP = "=" * 80
 
 
-def parse_and_save(dumpstate_path: str) -> str | None:
+def parse_and_save(dumpstate_path: str) -> Optional[str]:
     dumpstate_path = dumpstate_path.strip().strip('"').strip("'")
     if not os.path.isfile(dumpstate_path):
         print(f"  ⚠ 파일을 찾을 수 없습니다: {dumpstate_path}")
