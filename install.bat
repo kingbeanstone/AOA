@@ -31,11 +31,15 @@ if %errorlevel%==0 (
 )
 echo.
 
-REM --- 1. 대상 폴더 경로 -------------------------------------
+REM --- 1. 버전 정보 ------------------------------------------
+set "PARSER_VER=1.0"
+set "RULE_VER=1.0"
+
+REM --- 2. 대상 폴더 경로 -------------------------------------
 set "RULES_DIR=%USERPROFILE%\Documents\Cline\Rules"
 set "TOOL_DIR=%USERPROFILE%\.anr-tool"
 
-REM --- 2. 폴더 생성 ------------------------------------------
+REM --- 3. 폴더 생성 ------------------------------------------
 echo [1/3] 설치 폴더 준비
 echo       Rules: %RULES_DIR%
 echo       Tool : %TOOL_DIR%
@@ -43,7 +47,7 @@ if not exist "%RULES_DIR%" mkdir "%RULES_DIR%"
 if not exist "%TOOL_DIR%"  mkdir "%TOOL_DIR%"
 echo.
 
-REM --- 3. payload 파일 위치 확인 -----------------------------
+REM --- 4. payload 파일 위치 확인 -----------------------------
 set "PAYLOAD=%~dp0payload"
 if not exist "%PAYLOAD%\zz-anr-rule.md" (
     echo [오류] payload 폴더에서 룰 파일을 찾을 수 없습니다.
@@ -53,8 +57,8 @@ if not exist "%PAYLOAD%\zz-anr-rule.md" (
     exit /b 1
 )
 
-REM --- 4. 파일 복사 ------------------------------------------
-echo [2/3] 글로벌 룰 복사
+REM --- 5. 파일 복사 ------------------------------------------
+echo [2/3] 글로벌 룰 복사  ^(v%RULE_VER%^)
 copy /Y "%PAYLOAD%\zz-anr-rule.md" "%RULES_DIR%\zz-anr-rule.md" >nul
 if !errorlevel! neq 0 (
     echo       실패. Documents 폴더에 쓰기 권한이 있는지 확인하세요.
@@ -64,7 +68,7 @@ if !errorlevel! neq 0 (
 echo       OK
 echo.
 
-echo [3/3] 파서 스크립트 복사
+echo [3/3] 파서 스크립트 복사  ^(v%PARSER_VER%^)
 copy /Y "%PAYLOAD%\anr_parse.py" "%TOOL_DIR%\anr_parse.py" >nul
 if !errorlevel! neq 0 (
     echo       실패.
@@ -74,10 +78,14 @@ if !errorlevel! neq 0 (
 echo       OK
 echo.
 
-REM --- 5. 완료 메시지 ----------------------------------------
+REM --- 6. 완료 메시지 ----------------------------------------
 echo ============================================================
 echo   설치 완료
 echo ============================================================
+echo.
+echo 설치된 버전:
+echo   파서  : anr_parse.py      v%PARSER_VER%
+echo   룰    : zz-anr-rule.md    v%RULE_VER%
 echo.
 echo 사용 방법:
 echo   1. VSCode 를 실행 ^(또는 재시작^)
