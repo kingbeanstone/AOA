@@ -17,7 +17,7 @@ echo.
 
 REM --- 설정 --------------------------------------------------
 set "REPO=kingbeanstone/aoa2"
-set "BRANCH=main"
+set "BRANCH=claude/anr-analysis-tool-rz6Rv"
 set "DL_URL=https://github.com/%REPO%/archive/refs/heads/%BRANCH%.zip"
 set "TMP_ZIP=%TEMP%\anr-tool-latest.zip"
 set "TMP_DIR=%TEMP%\anr-tool-latest"
@@ -42,8 +42,15 @@ if !DL_OK!==0 (
 
 if !DL_OK!==1 (
     powershell -Command "Expand-Archive -Path '%TMP_ZIP%' -DestinationPath '%TMP_DIR%' -Force" >nul 2>&1
-    set "PAYLOAD=%TMP_DIR%\aoa2-%BRANCH%\payload"
-    echo       OK: GitHub 최신 버전 다운로드 완료
+    set "EXTRACTED="
+    for /D %%i in ("%TMP_DIR%\aoa2-*") do set "EXTRACTED=%%i"
+    if defined EXTRACTED (
+        set "PAYLOAD=!EXTRACTED!\payload"
+        echo       OK: GitHub 최신 버전 다운로드 완료
+    ) else (
+        echo       추출 실패 -- 로컬 파일로 설치합니다.
+        set "PAYLOAD=%~dp0payload"
+    )
 ) else (
     echo       GitHub 연결 실패 -- 로컬 파일로 설치합니다.
     set "PAYLOAD=%~dp0payload"
