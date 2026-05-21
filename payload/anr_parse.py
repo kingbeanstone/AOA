@@ -25,7 +25,7 @@ import sys
 from datetime import datetime as _dt
 from typing import Optional
 
-__version__ = "1.1"
+__version__ = "1.2"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -195,7 +195,33 @@ def extract_vm_traces(path: str) -> str:
                     continue
                 blocks_by_pid.setdefault(current_pid, []).append(s)
 
+    # CPU 과부하로 tombstoned 응답 없을 때 발생하는 덤프 실패 감지.
+    # 실패한 PID 블록에는 libdebuggerd_client 오류 뒤 Waiting Channels /
+    # 불완전한 native 프레임이 섞여 있으므로 블록을 모두 제거한다.
+    failed_dump_pids = set()
+    for blk_pid, blk_lines in list(blocks_by_pid.items()):
+        for l in blk_lines:
+            if "libdebuggerd_client: failed" in l:
+                failed_dump_pids.add(blk_pid)
+                blocks_by_pid[blk_pid] = []
+                break
+
+    def _failed_note(blk_pid):
+        cmd = pid_to_cmd.get(blk_pid, "?")
+        tag = "[ANR process]" if blk_pid == pid else "[related process]"
+        return [
+            f"--- {tag} pid {blk_pid}  ({cmd}) ---",
+            "",
+            "(trace 수집 실패: CPU 과부하로 tombstoned 응답 없음 — 스택 덤프 불가)",
+            "",
+        ]
+
     if not any(blocks_by_pid.values()):
+        if failed_dump_pids:
+            out = [header_line, ""]
+            for blk_pid in sorted(failed_dump_pids):
+                out += _failed_note(blk_pid)
+            return "\n".join(out)
         return "(VM TRACES AT LAST ANR 섹션 없음)"
 
     def _flush(cur_lines, result, blk_pid):
@@ -238,6 +264,11 @@ def extract_vm_traces(path: str) -> str:
         _flush(cur, all_threads, blk_pid)
 
     if not all_threads:
+        if failed_dump_pids:
+            out = [header_line, ""]
+            for blk_pid in sorted(failed_dump_pids):
+                out += _failed_note(blk_pid)
+            return "\n".join(out)
         flat = [l for blk in blocks_by_pid.values() for l in blk]
         return "\n".join([header_line] + flat)
 
@@ -250,6 +281,11 @@ def extract_vm_traces(path: str) -> str:
     if main_t is None:
         main_t = next((t for t in all_threads if t['name'] == 'main'), None)
     if main_t is None:
+        if failed_dump_pids:
+            out = [header_line, ""]
+            for blk_pid in sorted(failed_dump_pids):
+                out += _failed_note(blk_pid)
+            return "\n".join(out)
         flat = [l for blk in blocks_by_pid.values() for l in blk]
         return "\n".join([header_line] + flat)
 
@@ -330,7 +366,13 @@ def extract_vm_traces(path: str) -> str:
 
     out = [header_line, ""]
     pids_ordered = [anr_pid] + [p for p in blocks_by_pid if p != anr_pid]
+    for fp in sorted(failed_dump_pids):
+        if fp not in pids_ordered:
+            pids_ordered.append(fp)
     for blk_pid in pids_ordered:
+        if blk_pid in failed_dump_pids:
+            out += _failed_note(blk_pid)
+            continue
         proc_threads = [
             t for t in all_threads
             if t['pid'] == blk_pid and (t['pid'], t['tid']) in relevant
