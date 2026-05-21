@@ -5,7 +5,7 @@ VSCode + Cline 환경에서 안드로이드 ANR dumpstate 파일을 자동 분�
 ## 구조
 
 ```
-anr-tool/
+aoa2/
   ├ install.bat       ← 설치 스크립트 (Windows)
   ├ install.sh        ← 설치 스크립트 (Linux / macOS / WSL)
   ├ uninstall.bat     ← 제거 스크립트 (Windows)
@@ -17,15 +17,21 @@ anr-tool/
 
 ## 설치
 
+install 스크립트가 실행 시 **GitHub에서 최신 버전을 자동으로 다운로드**합니다.
+스크립트 파일 하나만 받아서 실행하면 됩니다.
+
 **Windows**
-1. 이 리포지토리를 임의 폴더에 다운로드
-2. `install.bat` 실행
+1. `install.bat` 다운로드
+2. 더블클릭으로 실행
 3. VSCode 재시작
 
 **Linux / macOS / WSL**
-1. 이 리포지토리를 임의 폴더에 다운로드
+1. `install.sh` 다운로드
 2. `bash install.sh` 실행
 3. VSCode 재시작
+
+> **오프라인 환경** — GitHub 연결에 실패하면 스크립트와 같은 폴더의
+> `payload/` 폴더에서 자동으로 폴백합니다. 이 경우 리포지토리 전체를 다운로드해서 실행하세요.
 
 ## 제거
 
