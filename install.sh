@@ -1,11 +1,17 @@
 #!/bin/bash
 # ANR 분석 도구 설치 (Linux / macOS / WSL)
+# GitHub에서 최신 파일 자동 다운로드 (실패 시 로컬 payload/ 폴백)
 
 PARSER_VER="1.1"
 RULE_VER="1.1"
 
+REPO="kingbeanstone/aoa2"
+BRANCH="main"
+DL_URL="https://github.com/$REPO/archive/refs/heads/$BRANCH.zip"
+TMP_ZIP="/tmp/anr-tool-latest.zip"
+TMP_DIR="/tmp/anr-tool-latest"
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PAYLOAD="$SCRIPT_DIR/payload"
 RULES_DIR="$HOME/Documents/Cline/Rules"
 TOOL_DIR="$HOME/.anr-tool"
 
@@ -15,8 +21,29 @@ echo "  ANR 분석 도구 설치"
 echo "============================================================"
 echo ""
 
-# 0. Python 확인
-echo "[0/3] Python 확인 중..."
+# 0. GitHub 최신 버전 다운로드
+echo "[0/4] GitHub에서 최신 버전 다운로드 중..."
+DOWNLOADED=0
+if curl -fsSL "$DL_URL" -o "$TMP_ZIP" 2>/dev/null; then
+    DOWNLOADED=1
+elif wget -q "$DL_URL" -O "$TMP_ZIP" 2>/dev/null; then
+    DOWNLOADED=1
+fi
+
+if [ "$DOWNLOADED" -eq 1 ]; then
+    rm -rf "$TMP_DIR"
+    mkdir -p "$TMP_DIR"
+    unzip -oq "$TMP_ZIP" -d "$TMP_DIR" 2>/dev/null
+    PAYLOAD_SRC="$TMP_DIR/aoa2-$BRANCH/payload"
+    echo "      OK: GitHub 최신 버전 다운로드 완료"
+else
+    echo "      GitHub 연결 실패 — 로컬 파일로 설치합니다."
+    PAYLOAD_SRC="$SCRIPT_DIR/payload"
+fi
+echo ""
+
+# 1. Python 확인
+echo "[1/4] Python 확인 중..."
 if command -v python3 &>/dev/null; then
     echo "      OK: python3 사용 가능"
 elif command -v python &>/dev/null; then
@@ -28,34 +55,41 @@ else
 fi
 echo ""
 
-# 1. 폴더 생성
-echo "[1/3] 설치 폴더 준비"
+# 2. 폴더 생성
+echo "[2/4] 설치 폴더 준비"
 echo "      Rules: $RULES_DIR"
 echo "      Tool : $TOOL_DIR"
 mkdir -p "$RULES_DIR"
 mkdir -p "$TOOL_DIR"
 echo ""
 
-# 2. payload 파일 위치 확인
-if [ ! -f "$PAYLOAD/zz-anr-rule.md" ]; then
+# payload 파일 위치 확인
+if [ ! -f "$PAYLOAD_SRC/zz-anr-rule.md" ]; then
     echo "[오류] payload 폴더에서 룰 파일을 찾을 수 없습니다."
-    echo "       경로: $PAYLOAD"
+    echo "       경로: $PAYLOAD_SRC"
+    echo "       GitHub 연결에 실패한 경우 payload/ 폴더가 install.sh와 같은 위치에 있는지 확인하세요."
+    rm -f "$TMP_ZIP" 2>/dev/null
+    rm -rf "$TMP_DIR" 2>/dev/null
     exit 1
 fi
 
 # 3. 파일 복사
-echo "[2/3] 글로벌 룰 복사  (v${RULE_VER})"
-cp "$PAYLOAD/zz-anr-rule.md" "$RULES_DIR/zz-anr-rule.md"
+echo "[3/4] 글로벌 룰 복사  (v${RULE_VER})"
+cp "$PAYLOAD_SRC/zz-anr-rule.md" "$RULES_DIR/zz-anr-rule.md"
 echo "      OK"
 echo ""
 
-echo "[3/3] 파서 스크립트 복사  (v${PARSER_VER})"
-cp "$PAYLOAD/anr_parse.py" "$TOOL_DIR/anr_parse.py"
+echo "[4/4] 파서 스크립트 복사  (v${PARSER_VER})"
+cp "$PAYLOAD_SRC/anr_parse.py" "$TOOL_DIR/anr_parse.py"
 chmod +x "$TOOL_DIR/anr_parse.py"
 echo "      OK"
 echo ""
 
-# 4. 완료 메시지
+# 임시 파일 정리
+rm -f "$TMP_ZIP" 2>/dev/null
+rm -rf "$TMP_DIR" 2>/dev/null
+
+# 완료 메시지
 echo "============================================================"
 echo "  설치 완료"
 echo "============================================================"
