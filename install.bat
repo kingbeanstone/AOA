@@ -28,6 +28,11 @@ set "TOOL_DIR=%USERPROFILE%\.anr-tool"
 
 REM --- 0. GitHub 최신 버전 다운로드 -------------------------
 echo [0/4] GitHub에서 최신 버전 다운로드 중...
+if defined ANR_SKIP_DOWNLOAD (
+    echo       OK: 최신 버전 준비 완료
+    set "PAYLOAD=%~dp0payload"
+    goto SKIP_DOWNLOAD
+)
 set "DL_OK=0"
 
 REM 1차: curl.exe (Windows 10 1803 이상 내장)
@@ -55,6 +60,8 @@ if !DL_OK!==1 (
     echo       GitHub 연결 실패 -- 로컬 파일로 설치합니다.
     set "PAYLOAD=%~dp0payload"
 )
+
+:SKIP_DOWNLOAD
 echo.
 
 REM --- 1. Python 확인 ----------------------------------------
@@ -87,8 +94,10 @@ if not exist "%PAYLOAD%\zz-anr-rule.md" (
     echo [오류] payload 폴더에서 룰 파일을 찾을 수 없습니다.
     echo        경로: %PAYLOAD%
     echo        GitHub 연결에 실패한 경우 payload\ 폴더가 install.bat과 같은 위치에 있는지 확인하세요.
-    if exist "%TMP_ZIP%" del /q "%TMP_ZIP%" >nul 2>&1
-    if exist "%TMP_DIR%" rd /s /q "%TMP_DIR%" >nul 2>&1
+    if not defined ANR_SKIP_DOWNLOAD (
+        if exist "%TMP_ZIP%" del /q "%TMP_ZIP%" >nul 2>&1
+        if exist "%TMP_DIR%" rd /s /q "%TMP_DIR%" >nul 2>&1
+    )
     pause
     exit /b 1
 )
@@ -114,9 +123,11 @@ if !errorlevel! neq 0 (
 echo       OK
 echo.
 
-REM --- 임시 파일 정리 ----------------------------------------
-if exist "%TMP_ZIP%" del /q "%TMP_ZIP%" >nul 2>&1
-if exist "%TMP_DIR%" rd /s /q "%TMP_DIR%" >nul 2>&1
+REM --- 임시 파일 정리 (직접 실행 시만) ------------------
+if not defined ANR_SKIP_DOWNLOAD (
+    if exist "%TMP_ZIP%" del /q "%TMP_ZIP%" >nul 2>&1
+    if exist "%TMP_DIR%" rd /s /q "%TMP_DIR%" >nul 2>&1
+)
 
 REM --- 완료 메시지 -------------------------------------------
 echo ============================================================
