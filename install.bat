@@ -21,15 +21,26 @@ set "BRANCH=main"
 set "DL_URL=https://github.com/%REPO%/archive/refs/heads/%BRANCH%.zip"
 set "TMP_ZIP=%TEMP%\anr-tool-latest.zip"
 set "TMP_DIR=%TEMP%\anr-tool-latest"
-set "PARSER_VER=1.1"
+set "PARSER_VER=1.2"
 set "RULE_VER=1.1"
 set "RULES_DIR=%USERPROFILE%\Documents\Cline\Rules"
 set "TOOL_DIR=%USERPROFILE%\.anr-tool"
 
 REM --- 0. GitHub 최신 버전 다운로드 -------------------------
 echo [0/4] GitHub에서 최신 버전 다운로드 중...
-curl -fsSL "%DL_URL%" -o "%TMP_ZIP%" >nul 2>&1
-if !errorlevel!==0 (
+set "DL_OK=0"
+
+REM 1차: curl.exe (Windows 10 1803 이상 내장)
+curl.exe -fsSL "%DL_URL%" -o "%TMP_ZIP%" >nul 2>&1
+if !errorlevel!==0 set "DL_OK=1"
+
+REM 2차: PowerShell Invoke-WebRequest (curl.exe 없는 구형 환경 폴백)
+if !DL_OK!==0 (
+    powershell -Command "Invoke-WebRequest -Uri '%DL_URL%' -OutFile '%TMP_ZIP%'" >nul 2>&1
+    if !errorlevel!==0 set "DL_OK=1"
+)
+
+if !DL_OK!==1 (
     powershell -Command "Expand-Archive -Path '%TMP_ZIP%' -DestinationPath '%TMP_DIR%' -Force" >nul 2>&1
     set "PAYLOAD=%TMP_DIR%\aoa2-%BRANCH%\payload"
     echo       OK: GitHub 최신 버전 다운로드 완료
