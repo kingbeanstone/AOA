@@ -1,4 +1,4 @@
-<!-- 버전: 1.1 -->
+<!-- 버전: 1.2 -->
 # ANR 덤프 분석 — 글로벌 룰
 
 이 룰은 안드로이드 ANR 덤프(dumpstate) 파일 분석 요청을 처리하기 위한
@@ -156,21 +156,43 @@ python3 "$HOME/.anr-tool/anr_parse.py" "<덤프경로>"
 
 ### 2. 함수 콜 스택 (Trace)
 
-ANR 시점 콜 스택을 **항상** 출력. 메인 스레드 우선,
-블로킹·락 경합 관련 스레드 스택도 함께.
+> **⚠️ 중요 제한: 반드시 파싱 결과 `[3] VM TRACES AT LAST ANR` 섹션에서만 추출한다.**
+> - ANR이 없거나 VM TRACES 섹션이 비어 있으면 → `ANR 없음 — 콜 스택 없음` 으로 표시
+> - Crash 스택(`[6] Crash 기록`)은 이 섹션에 절대 쓰지 않는다
+> - Crash 스택은 아래 [3. Crash 기록]에만 표시한다
 
-| 깊이 | 스레드 | 함수 / 위치 |
-|------|--------|-------------|
-| 0 | main | ... |
+메인 스레드 우선, 블로킹·락 경합 관련 스레드도 함께. 코드 블록으로 출력:
+
+```
+[main] (tid=XX)  — [상태: Sleeping / Blocked / ...]
+  at com.example.Foo.bar(Foo.java:123)
+  at com.example.Baz.qux(Baz.java:456)
+  ...
+
+[Binder:1234_1] (tid=YY)  — [Blocked, waiting on lock held by main]
+  at ...
+```
 
 ### 3. Crash 기록
 
 crash / fatal exception / tombstone / native crash / signal 발견 시
-**별도 항목으로 표시**. 없으면 "Crash 기록 없음" 명시.
+**별도 항목으로 표시**. 없으면 `Crash 기록 없음` 명시.
 
-| 시간 | 종류 | 내용 |
-|------|------|------|
-| ... | ... | ... |
+먼저 발견된 crash 목록을 요약 표로:
+
+| 시간 | 종류 | 프로세스 | 상세 |
+|------|------|----------|------|
+| ... | JAVA / NATIVE / TOMBSTONE | ... | ... |
+
+대표 crash의 스택은 코드 블록으로:
+
+```
+[JAVA/NATIVE/TOMBSTONE]  HH:MM:SS  proc=com.example.app
+FATAL EXCEPTION: main
+java.lang.NullPointerException: ...
+  at com.example.Foo.bar(Foo.java:123)
+  at ...
+```
 
 ### 4. 서술 항목
 
