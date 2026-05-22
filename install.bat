@@ -123,7 +123,6 @@ if !errorlevel! neq 0 (
     pause
     exit /b 1
 )
-REM uninstall.bat 도 복사으로 저장장소 확보
 if exist "%~dp0uninstall.bat" copy /Y "%~dp0uninstall.bat" "%TOOL_DIR%\uninstall.bat" >nul 2>&1
 echo       OK
 echo.
@@ -155,5 +154,5 @@ echo   파서 스크립트: %TOOL_DIR%\anr_parse.py
 echo.
 echo 제거하려면: %TOOL_DIR%\uninstall.bat 실행
 echo.
-pause
+if /I not "%ARG1%"=="skip" pause
 endlocal
