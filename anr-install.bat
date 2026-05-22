@@ -47,9 +47,7 @@ if not defined EXTRACTED (
 )
 
 echo.
-set ANR_SKIP_DOWNLOAD=1
-call "!EXTRACTED!\install.bat"
-set ANR_SKIP_DOWNLOAD=
+call "!EXTRACTED!\install.bat" skip
 
 if exist "%TMP_DIR%" rd /s /q "%TMP_DIR%" >nul 2>&1
 endlocal

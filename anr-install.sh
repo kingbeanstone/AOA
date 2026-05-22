@@ -45,8 +45,6 @@ if [ -z "$EXTRACTED" ]; then
 fi
 
 echo ""
-export ANR_SKIP_DOWNLOAD=1
-bash "${EXTRACTED}install.sh"
-unset ANR_SKIP_DOWNLOAD
+bash "${EXTRACTED}install.sh" skip
 
 rm -rf "$TMP_DIR"

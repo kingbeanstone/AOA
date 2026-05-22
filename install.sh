@@ -15,7 +15,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RULES_DIR="$HOME/Documents/Cline/Rules"
 TOOL_DIR="$HOME/.anr-tool"
 
-if [ -z "$ANR_SKIP_DOWNLOAD" ]; then
+SKIP_DL=0
+[ "$1" = "skip" ] && SKIP_DL=1
+
+if [ "$SKIP_DL" -eq 0 ]; then
     echo ""
     echo "============================================================"
     echo "  ANR 분석 도구 설치"
@@ -25,7 +28,7 @@ fi
 
 # 0. GitHub 최신 버전 다운로드
 echo "[0/4] GitHub에서 최신 버전 다운로드 중..."
-if [ -n "$ANR_SKIP_DOWNLOAD" ]; then
+if [ "$SKIP_DL" -eq 1 ]; then
     echo "      OK: 최신 버전 준비 완료"
     PAYLOAD_SRC="$SCRIPT_DIR/payload"
 else
@@ -80,7 +83,7 @@ if [ ! -f "$PAYLOAD_SRC/zz-anr-rule.md" ]; then
     echo "[오류] payload 폴더에서 룰 파일을 찾을 수 없습니다."
     echo "       경로: $PAYLOAD_SRC"
     echo "       GitHub 연결에 실패한 경우 payload/ 폴더가 install.sh와 같은 위치에 있는지 확인하세요."
-    if [ -z "$ANR_SKIP_DOWNLOAD" ]; then
+    if [ "$SKIP_DL" -eq 0 ]; then
         rm -f "$TMP_ZIP" 2>/dev/null
         rm -rf "$TMP_DIR" 2>/dev/null
     fi
@@ -96,11 +99,17 @@ echo ""
 echo "[4/4] 파서 스크립트 복사  (v${PARSER_VER})"
 cp "$PAYLOAD_SRC/anr_parse.py" "$TOOL_DIR/anr_parse.py"
 chmod +x "$TOOL_DIR/anr_parse.py"
+# uninstall.sh 도 복사로 저장장소 확보
+UNINSTALL_SRC="$(dirname "$PAYLOAD_SRC")/uninstall.sh"
+if [ -f "$UNINSTALL_SRC" ]; then
+    cp "$UNINSTALL_SRC" "$TOOL_DIR/uninstall.sh"
+    chmod +x "$TOOL_DIR/uninstall.sh"
+fi
 echo "      OK"
 echo ""
 
 # 임시 파일 정리 (직접 실행 시만)
-if [ -z "$ANR_SKIP_DOWNLOAD" ]; then
+if [ "$SKIP_DL" -eq 0 ]; then
     rm -f "$TMP_ZIP" 2>/dev/null
     rm -rf "$TMP_DIR" 2>/dev/null
 fi
@@ -124,5 +133,5 @@ echo "설치된 위치:"
 echo "  글로벌 룰    : $RULES_DIR/zz-anr-rule.md"
 echo "  파서 스크립트: $TOOL_DIR/anr_parse.py"
 echo ""
-echo "제거하려면 같은 폴더의 uninstall.sh 를 실행하세요."
+echo "제거하려면: $TOOL_DIR/uninstall.sh 실행"
 echo ""

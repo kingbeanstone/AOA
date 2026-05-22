@@ -1,15 +1,16 @@
 @echo off
-if not defined ANR_SKIP_DOWNLOAD chcp 65001 > nul
+set "ARG1=%~1"
+if /I not "%ARG1%"=="skip" chcp 65001 > nul
 setlocal enabledelayedexpansion
 
 REM ============================================================
 REM   ANR 분석 도구 설치 스크립트 (Windows)
 REM   - GitHub에서 최신 파일 자동 다운로드 (실패 시 로컬 payload\ 폴백)
 REM   - 글로벌 룰을 Cline 룰 폴더에 복사
-REM   - anr_parse.py 를 %USERPROFILE%\.anr-tool\ 에 복사
+REM   - anr_parse.py / uninstall.bat 를 %USERPROFILE%\.anr-tool\ 에 복사
 REM ============================================================
 
-if not defined ANR_SKIP_DOWNLOAD (
+if /I not "%ARG1%"=="skip" (
     echo.
     echo ============================================================
     echo   ANR 분석 도구 설치
@@ -30,7 +31,7 @@ set "TOOL_DIR=%USERPROFILE%\.anr-tool"
 
 REM --- 0. GitHub 최신 버전 다운로드 -------------------------
 echo [0/4] GitHub에서 최신 버전 다운로드 중...
-if defined ANR_SKIP_DOWNLOAD (
+if /I "%ARG1%"=="skip" (
     echo       OK: 최신 버전 준비 완료
     set "PAYLOAD=%~dp0payload"
     goto SKIP_DOWNLOAD
@@ -96,7 +97,7 @@ if not exist "%PAYLOAD%\zz-anr-rule.md" (
     echo [오류] payload 폴더에서 룰 파일을 찾을 수 없습니다.
     echo        경로: %PAYLOAD%
     echo        GitHub 연결에 실패한 경우 payload\ 폴더가 install.bat과 같은 위치에 있는지 확인하세요.
-    if not defined ANR_SKIP_DOWNLOAD (
+    if /I not "%ARG1%"=="skip" (
         if exist "%TMP_ZIP%" del /q "%TMP_ZIP%" >nul 2>&1
         if exist "%TMP_DIR%" rd /s /q "%TMP_DIR%" >nul 2>&1
     )
@@ -122,11 +123,13 @@ if !errorlevel! neq 0 (
     pause
     exit /b 1
 )
+REM uninstall.bat 도 복사으로 저장장소 확보
+if exist "%~dp0uninstall.bat" copy /Y "%~dp0uninstall.bat" "%TOOL_DIR%\uninstall.bat" >nul 2>&1
 echo       OK
 echo.
 
 REM --- 임시 파일 정리 (직접 실행 시만) ------------------
-if not defined ANR_SKIP_DOWNLOAD (
+if /I not "%ARG1%"=="skip" (
     if exist "%TMP_ZIP%" del /q "%TMP_ZIP%" >nul 2>&1
     if exist "%TMP_DIR%" rd /s /q "%TMP_DIR%" >nul 2>&1
 )
@@ -150,7 +153,7 @@ echo 설치된 위치:
 echo   글로벌 룰    : %RULES_DIR%\zz-anr-rule.md
 echo   파서 스크립트: %TOOL_DIR%\anr_parse.py
 echo.
-echo 제거하려면 같은 폴더의 uninstall.bat 을 실행하세요.
+echo 제거하려면: %TOOL_DIR%\uninstall.bat 실행
 echo.
 pause
 endlocal
