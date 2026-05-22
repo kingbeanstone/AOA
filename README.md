@@ -14,8 +14,10 @@ VSCode + Cline 환경에서 안드로이드 ANR dumpstate 파일을 자동 분�
 
 ### Linux / macOS / WSL
 
+터미널에 아래 명령어를 붙여넣으세요.
+
 ```bash
-curl -fsSL https://github.com/kingbeanstone/aoa2/releases/latest/download/anr-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kingbeanstone/aoa2/claude/anr-analysis-tool-rz6Rv/anr-install.sh | bash
 ```
 
 > curl이 없으면: `wget -qO- <위 URL> | bash`
