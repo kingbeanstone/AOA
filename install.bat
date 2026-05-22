@@ -154,5 +154,5 @@ echo   파서 스크립트: %TOOL_DIR%\anr_parse.py
 echo.
 echo 제거하려면: %TOOL_DIR%\uninstall.bat 실행
 echo.
-if /I not "%ARG1%"=="skip" pause
+pause
 endlocal
