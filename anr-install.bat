@@ -49,6 +49,9 @@ if not defined EXTRACTED (
 echo.
 call "!EXTRACTED!\install.bat" skip
 
+echo.
+echo 창을 닫으려면 아무 키나 누르세요.
+pause > nul
+
 if exist "%TMP_DIR%" rd /s /q "%TMP_DIR%" >nul 2>&1
 endlocal
-pause
