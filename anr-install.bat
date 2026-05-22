@@ -14,7 +14,7 @@ set "DL_URL=https://github.com/%REPO%/archive/refs/heads/%BRANCH%.zip"
 set "TMP_ZIP=%TEMP%\anr-tool-latest.zip"
 set "TMP_DIR=%TEMP%\anr-tool-latest"
 
-echo GitHub에서 최신 버전 다운로드 중... (잊시 기다려주세요)
+echo GitHub에서 최신 버전 다운로드 중... (잠시 기다려주세요)
 set "DL_OK=0"
 curl.exe -fsSL "%DL_URL%" -o "%TMP_ZIP%" >nul 2>&1
 if !errorlevel!==0 set "DL_OK=1"
