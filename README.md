@@ -15,8 +15,10 @@ VSCode + Cline 환경에서 안드로이드 ANR dumpstate 파일을 자동 분�
 ### Linux / macOS / WSL
 
 ```bash
-curl -fsSL https://github.com/kingbeanstone/aoa2/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/kingbeanstone/aoa2/releases/latest/download/anr-install.sh | bash
 ```
+
+> curl이 없으면: `wget -qO- <위 URL> | bash`
 
 > **오프라인 환경** — GitHub 연결에 실패하면 스크립트와 같은 폴더의
 > `payload/` 폴더에서 자동으로 폴백합니다.
@@ -52,9 +54,10 @@ anr 분석해줘
 
 ```
 aoa2/
-  ├ anr-install.bat  ← 설치 스텁 (Windows용 배포 파일)
+  ├ anr-install.bat  ← 설치 스터브 (Windows용 배포 파일)
+  ├ anr-install.sh   ← 설치 스터브 (Linux / macOS / WSL 배포 파일)
   ├ install.bat      ← 설치 스크립트 본체 (Windows)
-  ├ install.sh       ← 설치 스크립트 (Linux / macOS / WSL)
+  ├ install.sh       ← 설치 스크립트 본체 (Linux / macOS / WSL)
   ├ uninstall.bat    ← 제거 스크립트 (Windows)
   ├ uninstall.sh     ← 제거 스크립트 (Linux / macOS / WSL)
   └ payload/

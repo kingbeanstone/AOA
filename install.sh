@@ -15,35 +15,42 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RULES_DIR="$HOME/Documents/Cline/Rules"
 TOOL_DIR="$HOME/.anr-tool"
 
-echo ""
-echo "============================================================"
-echo "  ANR 분석 도구 설치"
-echo "============================================================"
-echo ""
+if [ -z "$ANR_SKIP_DOWNLOAD" ]; then
+    echo ""
+    echo "============================================================"
+    echo "  ANR 분석 도구 설치"
+    echo "============================================================"
+    echo ""
+fi
 
 # 0. GitHub 최신 버전 다운로드
 echo "[0/4] GitHub에서 최신 버전 다운로드 중..."
-DOWNLOADED=0
-if curl -fsSL "$DL_URL" -o "$TMP_ZIP" 2>/dev/null; then
-    DOWNLOADED=1
-elif wget -q "$DL_URL" -O "$TMP_ZIP" 2>/dev/null; then
-    DOWNLOADED=1
-fi
+if [ -n "$ANR_SKIP_DOWNLOAD" ]; then
+    echo "      OK: 최신 버전 준비 완료"
+    PAYLOAD_SRC="$SCRIPT_DIR/payload"
+else
+    DOWNLOADED=0
+    if curl -fsSL "$DL_URL" -o "$TMP_ZIP" 2>/dev/null; then
+        DOWNLOADED=1
+    elif wget -q "$DL_URL" -O "$TMP_ZIP" 2>/dev/null; then
+        DOWNLOADED=1
+    fi
 
-if [ "$DOWNLOADED" -eq 1 ]; then
-    rm -rf "$TMP_DIR"
-    mkdir -p "$TMP_DIR"
-    unzip -oq "$TMP_ZIP" -d "$TMP_DIR" 2>/dev/null
-    PAYLOAD_SRC=$(ls -d "$TMP_DIR"/aoa2-*/payload 2>/dev/null | head -1)
-    if [ -n "$PAYLOAD_SRC" ]; then
-        echo "      OK: GitHub 최신 버전 다운로드 완료"
+    if [ "$DOWNLOADED" -eq 1 ]; then
+        rm -rf "$TMP_DIR"
+        mkdir -p "$TMP_DIR"
+        unzip -oq "$TMP_ZIP" -d "$TMP_DIR" 2>/dev/null
+        PAYLOAD_SRC=$(ls -d "$TMP_DIR"/aoa2-*/payload 2>/dev/null | head -1)
+        if [ -n "$PAYLOAD_SRC" ]; then
+            echo "      OK: GitHub 최신 버전 다운로드 완료"
+        else
+            echo "      추출 실패 — 로컬 파일로 설치합니다."
+            PAYLOAD_SRC="$SCRIPT_DIR/payload"
+        fi
     else
-        echo "      추출 실패 — 로컬 파일로 설치합니다."
+        echo "      GitHub 연결 실패 — 로컬 파일로 설치합니다."
         PAYLOAD_SRC="$SCRIPT_DIR/payload"
     fi
-else
-    echo "      GitHub 연결 실패 — 로컬 파일로 설치합니다."
-    PAYLOAD_SRC="$SCRIPT_DIR/payload"
 fi
 echo ""
 
@@ -73,8 +80,10 @@ if [ ! -f "$PAYLOAD_SRC/zz-anr-rule.md" ]; then
     echo "[오류] payload 폴더에서 룰 파일을 찾을 수 없습니다."
     echo "       경로: $PAYLOAD_SRC"
     echo "       GitHub 연결에 실패한 경우 payload/ 폴더가 install.sh와 같은 위치에 있는지 확인하세요."
-    rm -f "$TMP_ZIP" 2>/dev/null
-    rm -rf "$TMP_DIR" 2>/dev/null
+    if [ -z "$ANR_SKIP_DOWNLOAD" ]; then
+        rm -f "$TMP_ZIP" 2>/dev/null
+        rm -rf "$TMP_DIR" 2>/dev/null
+    fi
     exit 1
 fi
 
@@ -90,9 +99,11 @@ chmod +x "$TOOL_DIR/anr_parse.py"
 echo "      OK"
 echo ""
 
-# 임시 파일 정리
-rm -f "$TMP_ZIP" 2>/dev/null
-rm -rf "$TMP_DIR" 2>/dev/null
+# 임시 파일 정리 (직접 실행 시만)
+if [ -z "$ANR_SKIP_DOWNLOAD" ]; then
+    rm -f "$TMP_ZIP" 2>/dev/null
+    rm -rf "$TMP_DIR" 2>/dev/null
+fi
 
 # 완료 메시지
 echo "============================================================"
