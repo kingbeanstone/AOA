@@ -24,8 +24,6 @@ set "BRANCH=claude/anr-analysis-tool-rz6Rv"
 set "DL_URL=https://github.com/%REPO%/archive/refs/heads/%BRANCH%.zip"
 set "TMP_ZIP=%TEMP%\anr-tool-latest.zip"
 set "TMP_DIR=%TEMP%\anr-tool-latest"
-set "PARSER_VER=1.2"
-set "RULE_VER=1.1"
 set "RULES_DIR=%USERPROFILE%\Documents\Cline\Rules"
 set "TOOL_DIR=%USERPROFILE%\.anr-tool"
 
@@ -104,6 +102,12 @@ if not exist "%PAYLOAD%\zz-anr-rule.md" (
     pause
     exit /b 1
 )
+
+REM --- payload 에서 버전 추출 (하드코딩 방지) -------------
+for /f "tokens=3 delims= " %%a in ('findstr /B "__version__" "%PAYLOAD%\anr_parse.py"') do set "PARSER_VER=%%~a"
+for /f "tokens=3 delims= " %%a in ('findstr /B "<!-- 버전:" "%PAYLOAD%\zz-anr-rule.md"') do set "RULE_VER=%%a"
+if not defined PARSER_VER set "PARSER_VER=?"
+if not defined RULE_VER set "RULE_VER=?"
 
 REM --- 3. 파일 복사 ------------------------------------------
 echo [3/4] 글로벌 룰 복사  ^(v%RULE_VER%^)

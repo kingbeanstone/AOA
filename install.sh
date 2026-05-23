@@ -2,9 +2,6 @@
 # ANR 분석 도구 설치 (Linux / macOS / WSL)
 # GitHub에서 최신 파일 자동 다운로드 (실패 시 로컬 payload/ 폴백)
 
-PARSER_VER="1.2"
-RULE_VER="1.1"
-
 REPO="kingbeanstone/aoa2"
 BRANCH="claude/anr-analysis-tool-rz6Rv"
 DL_URL="https://github.com/$REPO/archive/refs/heads/$BRANCH.zip"
@@ -89,6 +86,12 @@ if [ ! -f "$PAYLOAD_SRC/zz-anr-rule.md" ]; then
     fi
     exit 1
 fi
+
+# payload 파일에서 버전 추출 (하드코딩 방지)
+PARSER_VER=$(grep -m1 '^__version__' "$PAYLOAD_SRC/anr_parse.py" 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/')
+RULE_VER=$(grep -m1 '^<!-- 버전:' "$PAYLOAD_SRC/zz-anr-rule.md" 2>/dev/null | sed -E 's/.*버전:[[:space:]]*([^ ]+)[[:space:]]*-->.*/\1/')
+[ -z "$PARSER_VER" ] && PARSER_VER="?"
+[ -z "$RULE_VER" ] && RULE_VER="?"
 
 # 3. 파일 복사
 echo "[3/4] 글로벌 룰 복사  (v${RULE_VER})"
