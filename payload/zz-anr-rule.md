@@ -1,4 +1,4 @@
-<!-- 버전: 1.4 -->
+<!-- 버전: 1.5 -->
 # ANR 덤프 분석 — 글로벌 룰
 
 이 룰은 안드로이드 ANR 덤프(dumpstate) 파일 분석 요청을 처리하기 위한
@@ -189,34 +189,17 @@ ANR 없음 — 콜 스택 없음
 
 ### 3. Crash 기록
 
+ANR 분석 보조가 목적이므로 crash는 **최소 정보만** 기록한다.
 crash / fatal exception / tombstone / native crash / signal 발견 시
-**별도 항목으로 표시**. 없으면 `Crash 기록 없음` 명시.
+아래 두 항목만 출력. 없으면 `Crash 기록 없음` 명시하고 끝낸다.
 
-먼저 발견된 crash 목록을 요약 표로:
+- **총 발생 건수**: N건
+- **마지막 crash (1줄)**:
+  `[JAVA|NATIVE|TOMBSTONE]  HH:MM:SS.mmm  (ANR Δ ±N.Ns)  proc=<프로세스명>  — <exception 클래스 또는 signal>: <핵심 메시지>`
 
-| 시간 | 종류 | 프로세스 | 상세 |
-|------|------|----------|------|
-| ... | JAVA / NATIVE / TOMBSTONE | ... | ... |
-
-**마지막(가장 최근) crash 1건의 raw 로그 전문**을 코드 블록에 그대로 포함한다.
-파싱 결과 `[6] Crash 기록`에서 시간상 가장 마지막 엔트리를 골라,
-헤더(시간/종류/proc) + FATAL EXCEPTION + 전체 스택(Caused by 체인 포함)을
-**파서 출력 원문 그대로** 출력한다. 요약·생략·재구성 금지.
-
-```
-[JAVA/NATIVE/TOMBSTONE]  HH:MM:SS  proc=com.example.app
-FATAL EXCEPTION: main
-java.lang.NullPointerException: ...
-  at com.example.Foo.bar(Foo.java:123)
-  at ...
-Caused by: ...
-  at ...
-```
-
-> 주의:
-> - 이전 crash들은 요약 표에만 기록하고, 본문 로그는 반복 출력하지 않는다 (토큰 절약).
-> - 코드 블록 안 라인은 들여쓰기·공백 그대로 보존.
-> - tombstone인 경우 register dump·memory map은 제외하고 **backtrace 섹션까지만** 포함한다 (수백 줄 폭증 방지).
+> - **ANR Δ**: ANR 발생 시각 기준 상대 시간 (음수=ANR 이전, 양수=이후). ANR과의 인과 가능성 판단용.
+> - **ANR과의 인과**: ANR Δ가 ±수 초 이내이거나 ANR 프로세스와 동일 프로세스에서 발생한 경우 "관련 가능성 있음"을 1줄 덧붙이고, 그렇지 않으면 "ANR과 무관 추정"으로 표시.
+> - raw 스택은 출력하지 않는다. crash 상세가 ANR 원인 분석에 직접 필요한 경우에 한해 4절 "근거"에서 최상단 프레임 1줄만 인용한다.
 
 ### 4. 서술 항목
 
