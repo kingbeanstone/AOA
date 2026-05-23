@@ -22,6 +22,12 @@ dumpstate 파일에서 ANR 관련 섹션을 추출해 두 개의 텍스트 파�
   무관한 인과관계를 만들어내는 패턴을 차단하기 위함.
   사용자가 필요할 때만 _anr_crashes.txt 를 직접 확인한다.
 
+* 라인 절단 (v1.4~):
+  [4] / [5] 의 각 로그 라인을 500자로 절단한다.
+  Android 시스템 로그가 한 줄에 객체 전체를 직렬화해 박는 경우
+  (TaskInfo, TransitionRequestInfo, InsetsController 등),
+  분석에는 앞부분만으로 충분하면서 토큰량이 폭증하는 것을 막는다.
+
 외부 라이브러리 불필요 (표준 라이브러리만 사용).
 Python 3.8 이상 호환.
 """
@@ -32,7 +38,7 @@ import sys
 from datetime import datetime as _dt
 from typing import Optional
 
-__version__ = "1.3"
+__version__ = "1.4"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -459,6 +465,33 @@ def _collapse_consecutive_same_tag(lines, keep_head: int = 1):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 거대 단일 라인 절단 (TaskInfo / TransitionRequestInfo 등 객체 dump 폭증 차단)
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# Android 시스템 로그는 한 줄에 객체 전체를 직렬화해 박는 경우가 많다
+# (WindowManagerShell, InsetsController, WindowManager 등이 상습).
+# ANR 분석에는 앞부분만 있어도 충분하므로 라인 단위로 잘라서 토큰을 절약한다.
+#
+# 측정 사례 (GC 폭주 케이스):
+#   [5] freeze 이전 로그 1,155 라인 중 30 라인이 2,000자 초과,
+#   이 30 라인이 [5] 전체의 27.9% (86k chars) 차지.
+#   500자로 자르면 [5] 가 312k → 약 200k 로 감소 (≈ 35% 절약).
+_MAX_LINE_LEN_DEFAULT = 500
+
+
+def _truncate_long_lines(lines, max_len: int = _MAX_LINE_LEN_DEFAULT):
+    """각 라인을 max_len 자로 잘라 절약. 잘린 분량을 표시한다."""
+    out = []
+    for l in lines:
+        if len(l) <= max_len:
+            out.append(l)
+        else:
+            cut = len(l) - max_len
+            out.append(l[:max_len] + f" … (+{cut:,}자 절단)")
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # [4] ANR 발생 시점 부근 logcat 키워드
 # ──────────────────────────────────────────────────────────────────────────────
 _GC_KW = [
@@ -533,7 +566,7 @@ def extract_logcat_window(path: str, window_before: int = 120, window_after: int
         if lines:
             has_any = True
             parts.append(f"\n[{cat}]")
-            parts.extend(_collapse_consecutive_same_tag(lines))
+            parts.extend(_truncate_long_lines(_collapse_consecutive_same_tag(lines)))
 
     if not has_any:
         parts.append("(해당 키워드 없음)")
@@ -588,6 +621,7 @@ def extract_pre_freeze_log(path: str, lookback: int = 30) -> str:
                 out_lines.append(line.rstrip())
 
     out_lines = _collapse_consecutive_same_tag(out_lines)
+    out_lines = _truncate_long_lines(out_lines)
 
     header = (
         f"(ANR 시각: {anr_time_str}  /  지연: {delay_ms}ms  /  "
