@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
 """
 anr_parse.py
-dumpstate 파일에서 ANR 관련 섹션을 추출해 텍스트 파일로 저장.
+dumpstate 파일에서 ANR 관련 섹션을 추출해 두 개의 텍스트 파일로 분리 저장.
 
 사용법:
   python anr_parse.py <dumpstate_path>
   또는 실행 후 경로 드래그/입력
 
-출력 섹션:
+출력 파일 1: <원본>_anr_parsed.txt  (분석용 — LLM 이 읽는 파일)
   [1] am_anr       — logcat am_anr 이벤트
   [2] ANR in       — ActivityManager ANR 헤더 + CPU 사용량 + PSI 메모리
   [3] VM traces    — VM TRACES AT LAST ANR 스레드 덤프
   [4] 부근 logcat  — ANR 발생 시점 -120s ~ +10s 키워드 (GC / System / Render / IO)
   [5] freeze 이전  — freeze 추정 시각 기준 패키지 로그
-  [6] Crash 기록   — Java / native crash / TOMBSTONE
+
+출력 파일 2: <원본>_anr_crashes.txt  (참고용 — ANR 분석에 사용하지 않음)
+  [A] Crash 기록   — Java / native crash / TOMBSTONE (파일 전체 스캔)
+
+* Crash 정보를 별도 파일로 분리한 이유:
+  LLM 이 ANR 본문 분석 중에 crash 로그를 끌어들여
+  무관한 인과관계를 만들어내는 패턴을 차단하기 위함.
+  사용자가 필요할 때만 _anr_crashes.txt 를 직접 확인한다.
 
 외부 라이브러리 불필요 (표준 라이브러리만 사용).
 Python 3.8 이상 호환.
@@ -25,7 +32,7 @@ import sys
 from datetime import datetime as _dt
 from typing import Optional
 
-__version__ = "1.2"
+__version__ = "1.3"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -815,16 +822,42 @@ def extract_crash_records(path: str) -> str:
 # 파싱 실행 및 저장
 # ──────────────────────────────────────────────────────────────────────────────
 
-SECTIONS = [
+# 분석용 — _anr_parsed.txt 에 저장됨 (LLM 이 읽는 파일)
+SECTIONS_MAIN = [
     ("[1] am_anr 이벤트",                          extract_am_anr),
     ("[2] ANR in  (ActivityManager 섹션)",          extract_anr_in),
     ("[3] VM TRACES AT LAST ANR  (스레드 덤프)",   extract_vm_traces),
     ("[4] ANR 부근 logcat 키워드  (-120s ~ +10s)",  extract_logcat_window),
     ("[5] freeze 이전 패키지 로그  (freeze-30s ~ freeze)", extract_pre_freeze_log),
-    ("[6] Crash 기록  (Java / native / TOMBSTONE, 파일 전체)", extract_crash_records),
+]
+
+# 참고용 — _anr_crashes.txt 에 별도 저장됨 (ANR 분석에 사용하지 않음)
+SECTIONS_AUX = [
+    ("[A] Crash 기록  (Java / native / TOMBSTONE, 파일 전체)", extract_crash_records),
 ]
 
 SEP = "=" * 80
+
+
+def _write_sections(dumpstate_path: str, sections, header_title: str, out_path: str):
+    """주어진 섹션들을 실행하여 결과를 파일로 저장."""
+    output_lines = [
+        header_title,
+        f"파서 버전 : {__version__}",
+        f"원본 : {os.path.basename(dumpstate_path)}",
+        f"일시 : {_dt.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        SEP,
+    ]
+    for title, fn in sections:
+        output_lines += [f"\n{SEP}", title, SEP]
+        try:
+            output_lines.append(fn(dumpstate_path))
+        except Exception as e:
+            output_lines.append(f"(오류: {e})")
+        print(f"  ✓ {title}")
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(output_lines))
 
 
 def parse_and_save(dumpstate_path: str) -> Optional[str]:
@@ -835,31 +868,29 @@ def parse_and_save(dumpstate_path: str) -> Optional[str]:
 
     print(f"\n파싱 중: {os.path.basename(dumpstate_path)}")
 
-    output_lines = [
-        "ANR 파싱 결과",
-        f"파서 버전 : {__version__}",
-        f"원본 : {os.path.basename(dumpstate_path)}",
-        f"일시 : {_dt.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        SEP,
-    ]
-
-    for title, fn in SECTIONS:
-        output_lines += [f"\n{SEP}", title, SEP]
-        try:
-            output_lines.append(fn(dumpstate_path))
-        except Exception as e:
-            output_lines.append(f"(오류: {e})")
-        print(f"  ✓ {title}")
-
-    result = "\n".join(output_lines)
-
     base = os.path.splitext(dumpstate_path)[0]
-    out_path = base + "_anr_parsed.txt"
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(result)
+    main_path = base + "_anr_parsed.txt"
+    aux_path  = base + "_anr_crashes.txt"
 
-    print(f"\n  → 저장 완료: {out_path}")
-    return out_path
+    # 1. 분석용 메인 출력 (LLM 이 읽음)
+    _write_sections(
+        dumpstate_path,
+        SECTIONS_MAIN,
+        "ANR 파싱 결과 (분석용)",
+        main_path,
+    )
+
+    # 2. 참고용 부록 출력 (사용자 참고용 — LLM 은 읽지 않음)
+    _write_sections(
+        dumpstate_path,
+        SECTIONS_AUX,
+        "ANR 부록 — Crash 기록 (참고용 · ANR 분석에 사용되지 않음)",
+        aux_path,
+    )
+
+    print(f"\n  → 분석용 저장: {main_path}")
+    print(f"  → 부록 저장  : {aux_path}")
+    return main_path
 
 
 def main():

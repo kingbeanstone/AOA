@@ -1,4 +1,4 @@
-<!-- 버전: 1.7 -->
+<!-- 버전: 1.8 -->
 # ANR 덤프 분석 — 글로벌 룰
 
 이 룰은 안드로이드 ANR 덤프(dumpstate) 파일 분석 요청을 처리하기 위한
@@ -18,7 +18,7 @@
   - Windows: `C:\path\to\dumpstate.txt anr`
   - Linux / macOS / WSL: `/home/user/dumpstate.txt anr`
 
-위 조건에 해당하지 않으면 이 룰은 무시한다 (일반 작업 방해 금지).
+위 조건에 해당하지 않으면 이 룰은 무시한다.
 
 ═══════════════════════════════════════════════════════════════
 2. 절대 규칙
@@ -26,13 +26,20 @@
 
 1. **원본 덤프 파일을 절대 직접 읽지 말 것.**
    덤프는 수십~수백 MB라 직접 읽으면 컨텍스트가 폭주해 분석 불가.
-   반드시 `anr_parse.py` 로 파싱한 결과 파일만 읽는다.
 
-2. **`anr_parse.py` 경로는 OS와 셸에 따라 달라진다. (3절 참고)**
+2. **`_anr_parsed.txt` 만 읽고 분석한다.**
+   파서는 분석용 파일(`_anr_parsed.txt`)과 참고용 부록 파일
+   (`_anr_crashes.txt`)을 동시에 생성한다. 분석은 전자만 사용한다.
 
-3. **작업 전 반드시 셸 환경을 먼저 확인하고 경로·명령을 결정한다.**
+3. **`_anr_crashes.txt` 는 읽지 않는다.**
+   이 파일은 사용자가 직접 참고하기 위한 raw dump 이며,
+   ANR 분석에는 사용하지 않는다. 보고서에는 파일 경로만 안내한다.
 
-4. **표면 증상에서 멈추지 말 것.** (6절 참고)
+4. **`anr_parse.py` 경로는 OS와 셸에 따라 달라진다. (3절 참고)**
+
+5. **작업 전 반드시 셸 환경을 먼저 확인하고 경로·명령을 결정한다.**
+
+6. **표면 증상에서 멈추지 말 것.** (6절 참고)
    "메인 스레드가 X에서 Waiting" 은 증상일 뿐 원인이 아니다.
    **왜 그 대기가 풀리지 않았는지**까지 추적해야 한다.
 
@@ -40,22 +47,16 @@
 3. 셸 환경 감지 및 경로·명령 결정 (필수 — 작업 전 1회 수행)
 ═══════════════════════════════════════════════════════════════
 
-(이전 버전과 동일 — 생략 없이 그대로 유지)
-
 ### 3-1. 감지 명령
 
 ```
 echo $PSVersionTable
 ```
 
-- 출력이 비어 있거나 오류 → bash / zsh / CMD
-- `PSVersionTable` 내용 출력 → PowerShell
+- 출력 비어 있음/오류 → bash / zsh / CMD
+- `PSVersionTable` 출력 → PowerShell
 
-bash/CMD 구분이 필요한 경우:
-
-```
-echo $SHELL
-```
+bash/CMD 구분이 필요한 경우: `echo $SHELL`
 
 ### 3-2. 환경별 경로 및 Python 호출
 
@@ -68,37 +69,37 @@ echo $SHELL
 ### 3-3. 실행 예시
 
 **PowerShell:**
-
 ```powershell
 py "$env:USERPROFILE\.anr-tool\anr_parse.py" "<덤프경로>"
 ```
-
 **CMD:**
-
 ```cmd
 py "%USERPROFILE%\.anr-tool\anr_parse.py" "<덤프경로>"
 ```
-
 **bash / zsh:**
-
 ```bash
 python3 "$HOME/.anr-tool/anr_parse.py" "<덤프경로>"
 ```
 
 ### 3-4. Python 실행 실패 시
 
-`py` → `python` → `python3` 순으로 재시도. 모두 실패 시 사용자 안내 후 중단.
+`py` → `python` → `python3` 순으로 재시도. 모두 실패 시 사용자에게
+Python 설치 여부 확인 후 중단. 스크립트 파일 자체가 없으면(`No such file`)
+설치 스크립트가 실행되지 않은 것이므로 사용자에게 안내하고 중단.
 
 ═══════════════════════════════════════════════════════════════
 4. 분석 절차
 ═══════════════════════════════════════════════════════════════
 
 1. 셸 환경 감지 (3절)
-2. `anr_parse.py <덤프경로>` 실행 → `<원본>_anr_parsed.txt` 생성
-3. 생성된 `_anr_parsed.txt` 만 읽고 분석
+2. `anr_parse.py <덤프경로>` 실행
+   → `<원본>_anr_parsed.txt` (분석용) 와
+     `<원본>_anr_crashes.txt` (참고용 부록) 가 함께 생성됨
+3. **`_anr_parsed.txt` 만 읽고 분석.** (`_anr_crashes.txt` 는 읽지 않음)
 4. **6절의 근본 원인 추적 체크리스트를 반드시 수행**
 5. 보고서를 원본과 같은 디렉토리에 `<원본>_anr_analysis.md` 로 저장
-6. 환경에 맞는 명령으로 보고서 열어주기
+6. 보고서 마지막에 `_anr_crashes.txt` 파일 경로를 한 줄로 안내
+7. 환경에 맞는 명령으로 보고서 열기
 
 ### 4-1. 보고서 파일 열기 명령
 
@@ -106,9 +107,9 @@ python3 "$HOME/.anr-tool/anr_parse.py" "<덤프경로>"
 |------|------|
 | **PowerShell** | `Invoke-Item "<경로>"` 또는 `Start-Process "<경로>"` |
 | **CMD** | `start "" "<경로>"` |
-| **bash / zsh** | `xdg-open` (Linux) / `open` (macOS) |
+| **bash / zsh** | `xdg-open "<경로>"` (Linux) / `open "<경로>"` (macOS) |
 
-> PowerShell에서 `start "" "경로"` 는 오류 발생 — 반드시 `Invoke-Item` 사용.
+> ⚠️ PowerShell에서 `start "" "경로"` 는 오류 — `Invoke-Item` 사용.
 
 ═══════════════════════════════════════════════════════════════
 5. 보고서 형식
@@ -116,31 +117,36 @@ python3 "$HOME/.anr-tool/anr_parse.py" "<덤프경로>"
 
 **파싱 결과 섹션 → 보고서 섹션 매핑**:
 
-| 파싱 결과 | 보고서 |
-|---------|--------|
-| `[3] VM TRACES AT LAST ANR` | **2. 함수 콜 스택** 전용 |
-| `[6] Crash 기록` | **3. Crash 기록** 전용 |
+| 파싱 결과 (`_anr_parsed.txt`) | 보고서 위치 |
+|------------------------------|------------|
+| `[1] am_anr` | 0. 기본 정보 |
+| `[2] ANR in` | 0. 기본 정보 / 1. 타임라인 |
+| `[3] VM TRACES AT LAST ANR` | 2. 콜 스택 |
+| `[4] ANR 부근 logcat` | 1. 타임라인 / 3. 서술 항목 근거 |
+| `[5] freeze 이전 패키지 로그` | 1. 타임라인 (필요 시) |
 
-### 0. ANR 기본 정보 (표)
+> Crash 정보는 분석 입력에 포함되지 않는다.
+> `_anr_crashes.txt` 의 존재는 보고서 끝 "부록 안내" 에서만 언급.
+
+### 0. ANR 기본 정보
 
 | 항목 | 내용 |
 |------|------|
 | 덤프 파일명 | ... |
-| ANR 유형 | Input dispatching / Broadcast / Service / etc. |
+| ANR 유형 | Input / Broadcast / Service / etc. |
 | 발생 프로세스 | com.example.app (PID ...) |
 | 발생 시각 | HH:MM:SS |
 | 지연 시간 | X ms (am_anr delay 값) |
 | 주요 사유 | 한 줄 요약 |
 
 **am_anr 원문 로그 (1줄):**
-
 ```
-<am_anr 로그 원문 그대로>
+<원문 그대로>
 ```
 
 ### 1. 이벤트 타임라인 표
 
-ANR 원인과 직접 관련된 이벤트만 시간순 정리.
+ANR 원인과 직접 관련된 이벤트만 시간순.
 
 | 시간 | 이벤트 | 상세 |
 |------|--------|------|
@@ -149,159 +155,106 @@ ANR 원인과 직접 관련된 이벤트만 시간순 정리.
 
 **출처: 파싱 결과 `[3]` 전용.**
 
-- `[3]` 이 없으면: `ANR 없음 — 콜 스택 없음` 한 줄.
-- 있으면: 메인 스레드 우선 + 블로킹·락 경합 관련 스레드.
-  스레드 상태(`Waiting`, `Blocked`, `Sleeping` 등)를 반드시 표기.
-- **대기 대상이 있다면 명시**: `waiting on <0x...> (CountDownLatch)`,
-  `waiting to lock <0x...> held by tid=N` 등.
+- `[3]` 이 `(VM TRACES AT LAST ANR 섹션 없음)` 이면:
+  ```
+  ANR 없음 — 콜 스택 없음
+  ```
+- 있으면: 메인 스레드 + 블로킹·락 경합 관련 스레드.
+  스레드 상태(`Waiting` / `Blocked` / `Sleeping` / `WaitingForGcToComplete` 등) 표기 필수.
+  대기 대상이 있다면 명시 (`waiting on <0x...>`, `held by tid=N` 등).
 
 ```
-[main] (tid=XX) — [Waiting on CountDownLatch@0x...]
-  at jdk.internal.misc.Unsafe.park(...)
-  at java.util.concurrent.locks.LockSupport.park(...)
-  at com.example.Foo.bar(Foo.kt:164)
-  ...
-```
-
-### 3. Crash 기록 (간결 모드)
-
-- 발견 시: **요약 표 + 가장 최근 1건의 raw 로그**만 포함.
-- 없으면: `Crash 기록 없음` 한 줄.
-
-| 시간 | 종류 | 프로세스 | 메시지 1줄 |
-|------|------|----------|------------|
-
-마지막 crash raw 로그 (tombstone은 backtrace까지만, register/memory map 제외):
-
-```
-[JAVA/NATIVE/TOMBSTONE] HH:MM:SS proc=...
-FATAL EXCEPTION: ...
+[main] (tid=XX) — [상태]
   at ...
 ```
 
-**중요:** 이 섹션은 단순 기록이다. ANR 원인 평가는 **6절**에서.
+### 3. 서술 항목 (본질 추적)
 
-### 4. 서술 항목 (본질 추적)
+이 섹션은 `_anr_parsed.txt` 의 내용만 사용해서 작성한다.
 
-- **타임라인 요약**: 사건 발생 순서 (사용자 입력 → 메인 스레드 진입 →
-  블로킹 → 타임아웃).
+- **타임라인 요약**: 사건 발생 순서.
 - **직접 트리거**: 메인 스레드를 막은 호출 (파일:라인). 표면 증상.
-- **블로킹이 풀리지 않은 이유** (필수, 6절 체크리스트 결과를 여기 정리):
-  - 대기 대상이 무엇인가 (lock, latch, future, binder 응답, IPC 등)
-  - 누가 그것을 해제해야 했는가 (어느 스레드, 어느 콜백)
-  - 그 해제 주체가 왜 실행되지 못했는가
-- **근본 원인**: 위 추적의 종착점. 단순 "메인 스레드 블로킹"이 아니라
-  **구조적 결함**으로 기술 (예: 메인 스레드에서 메인 스레드 큐로
-  디스패치되는 콜백을 동기 대기 → 데드락).
-- **근거**: 파싱 결과의 어느 섹션·라인이 위 추론을 뒷받침하는지.
-- **해결 방안**: 근본 원인에 대응하는 구조적 수정안. 일반론
-  ("메인 스레드 막지 마세요") 만으로는 부족하다.
+- **블로킹이 풀리지 않은 이유** (6절 체크리스트 결과):
+  - 대기 대상이 무엇인가
+  - 누가 해제해야 하는가
+  - 왜 해제되지 못했는가
+- **근본 원인**: 구조적 결함으로 기술.
+- **근거**: 파싱 결과의 어느 섹션·라인이 근거인지 인용.
+  인용 형식 예시:
+  - `[3] VM TRACES`: <스레드명> 상태 <상태값>, <라인 위치>
+  - `[4] logcat`: HH:MM:SS <태그> <메시지 요약>
+  - `am_anr`: <필드 값>
+- **해결 방안**: 근본 원인에 대응하는 구조적 수정안.
+  일반론("메인 스레드 막지 마세요")만으로는 부족하다.
 
-### 5. ANR 무관 부수 이슈 (있을 때만)
+### 4. 부록 안내 (마지막 줄)
 
-Crash나 권한 오류 등이 ANR과 무관하다고 6절에서 판정된 경우,
-이 섹션에서 **별개 이슈로 명시적으로 분리**해서 언급.
-ANR 해결 방안 섹션에 섞어 쓰지 말 것.
+보고서의 가장 마지막에 다음 한 줄만 추가한다:
+
+```
+> Crash 기록(참고용)은 별도 파일 `<원본>_anr_crashes.txt` 에서 확인 가능합니다.
+```
+
+이게 전부다. Crash 내용 요약, 해석, 평가, ANR 관련성 언급은 작성하지 않는다.
 
 ═══════════════════════════════════════════════════════════════
 6. 근본 원인 추적 체크리스트 (필수)
 ═══════════════════════════════════════════════════════════════
 
-보고서 작성 전 반드시 아래 단계를 머릿속으로(또는 보고서에) 수행한다.
+보고서 작성 전 반드시 아래 단계를 수행한다.
 
 ### 6-1. 메인 스레드 상태 분류
 
 `[3]` 의 main 스레드 상태에 따라 분기:
 
-| 상태 | 의미 | 다음 단계 |
-|------|------|----------|
-| `Waiting` (object 명시) | 동기화 객체 대기 | **6-2** |
-| `Blocked` (waiting to lock) | 락 경합 | **6-3** |
-| `Native` / `Sleeping` | 네이티브 호출 / sleep | **6-4** |
-| `Runnable` | CPU 점유 중 (긴 작업) | **6-5** |
+| 상태 | 다음 단계 |
+|------|----------|
+| `Waiting` (object 명시) | 6-2 |
+| `Blocked` (waiting to lock) | 6-3 |
+| `Native` / `Sleeping` | 6-4 |
+| `WaitingForGcToComplete` / `WaitingPerformingGc` | 6-5 (GC 분기) |
+| `Runnable` | 6-5 (CPU 분기) |
 
 ### 6-2. 동기화 객체 대기 — 해제 책임자 추적
 
-대기 대상별로 "누가 해제해야 하는가" 를 파악:
-
-| 대기 대상 | 해제 호출 | 해제 주체 위치 |
-|----------|----------|---------------|
-| `CountDownLatch` | `countDown()` | 다른 스레드 또는 콜백 |
+| 대기 대상 | 해제 호출 | 해제 주체 |
+|----------|----------|----------|
+| `CountDownLatch` | `countDown()` | 다른 스레드/콜백 |
 | `Semaphore` | `release()` | 다른 스레드 |
-| `Future` / `CompletableFuture` | `complete()` / 작업 완료 | 워커 스레드 또는 콜백 |
+| `Future` | `complete()` / 작업 완료 | 워커 |
 | `Condition.await()` | `signal()` / `signalAll()` | 다른 스레드 |
 | `Object.wait()` | `notify()` / `notifyAll()` | 다른 스레드 |
-| Binder transact 응답 | 원격 프로세스 응답 | 원격 프로세스 |
+| Binder transact | 원격 응답 | 원격 프로세스 |
 
 **핵심 질문:** 해제 주체가 실행될 수 있는 환경인가?
 
-특히 다음 **데드락 패턴**을 의심:
-- 메인 스레드가 대기 → 해제는 **메인 스레드 메시지 큐로 디스패치되는 콜백**에서 수행
-  - 예: `ServiceConnection.onServiceConnected`, `BroadcastReceiver.onReceive`,
-    `Handler.post`, `runOnUiThread`, RxJava `AndroidSchedulers.mainThread()`,
-    Coroutine `Dispatchers.Main`
-  - 결과: 메인 스레드가 자기 자신의 콜백을 막아 영원히 대기 → **데드락**
-- 동기적 `bindService` + `await` 패턴
+**데드락 패턴 의심:**
+- 메인 스레드 대기 → 해제는 메인 스레드 메시지 큐 콜백
+  (`ServiceConnection.onServiceConnected`, `BroadcastReceiver.onReceive`,
+  `Handler.post`, `runOnUiThread`, RxJava `AndroidSchedulers.mainThread()`,
+  Coroutine `Dispatchers.Main`)
+- `bindService` + `await`
 - `runBlocking { withContext(Dispatchers.Main) { ... } }` on main
 
 ### 6-3. 락 경합
 
-- 락을 쥐고 있는 스레드(`held by tid=N`)의 콜 스택을 함께 확인.
+- 락을 쥔 스레드(`held by tid=N`)의 콜 스택을 함께 확인.
 - 그 스레드가 무엇을 하다 락을 못 놓고 있는지가 근본 원인.
 
 ### 6-4. Native / Sleeping
 
-- JNI 호출, 파일 I/O, 네트워크 동기 호출, `Thread.sleep` 등.
-- Strict mode 위반 가능성.
+- JNI 호출, 동기 파일/네트워크 I/O, `Thread.sleep` 등.
+- StrictMode 위반 가능성.
 
-### 6-5. Runnable
+### 6-5. GC / Runnable
 
-- 메인 스레드에서 CPU 집약 작업 (큰 JSON 파싱, 이미지 디코딩, 큰 루프 등).
-- GC 폭주(`art:`, `Background concurrent ... GC`) 동반 여부 확인.
+**GC 분기** (`WaitingForGcToComplete` / `WaitingPerformingGc`):
+- 다른 스레드들의 할당 패턴 확인 (워커가 무한 할당 중인가?).
+- `[4] logcat` 의 `Background concurrent ... GC freed ...` 빈도 확인.
+- 할당 속도 > 회수 속도 → GC Thrashing.
+- 메인 스레드 자체도 할당 루프에 참여하는지 확인.
+- 근거 인용 시 `[3]`, `[4]` 만 사용. 메모리 관련 crash 추정은 금지
+  (crash 파일은 본 분석에서 사용하지 않음).
 
-### 6-6. Crash ↔ ANR 인과관계 평가
-
-`[6]` 에 crash 가 있다면 다음 표로 분류:
-
-| 분류 | 조건 | 처리 |
-|------|------|------|
-| **ANR 원인** | ANR 시각 직전, ANR 프로세스의 메인 스레드 crash, 또는 메인 스레드 대기를 해제할 컴포넌트의 crash | 4 절 "근본 원인" 에 포함 |
-| **무관 부수 이슈** | 다른 프로세스의 crash, ANR 시점과 시간차 큼, 메인 스레드 대기와 무관한 컴포넌트 | 5 절 "부수 이슈"에 분리 기재 |
-
-**중요:** 시간상 인접하다는 이유만으로 인과관계를 추정하지 말 것.
-**메인 스레드의 대기 해제 경로에 그 컴포넌트가 있는지**가 판단 기준.
-
-예시:
-- `AnrService` (Foreground Service) 가 권한 오류로 crash 반복.
-  메인 스레드는 `AnrBindService` 에 바인딩하며 latch 대기 중.
-  → 두 서비스는 별개. crash는 **무관 부수 이슈**.
-
-═══════════════════════════════════════════════════════════════
-7. 키워드 기반 추가 분석 (선택)
-═══════════════════════════════════════════════════════════════
-
-1차 보고 후 사용자가 키워드 입력 시:
-
-**PowerShell:**
-
-```powershell
-py "$env:USERPROFILE\.anr-tool\anr_parse.py" "<덤프경로>" -k <키워드>
-```
-
-**CMD:**
-
-```cmd
-py "%USERPROFILE%\.anr-tool\anr_parse.py" "<덤프경로>" -k <키워드>
-```
-
-**bash / zsh:**
-
-```bash
-python3 "$HOME/.anr-tool/anr_parse.py" "<덤프경로>" -k <키워드>
-```
-
-- 복수 키워드: `-k <키워드1> -k <키워드2>`
-- 범위: `-b <초>` (ANR 이전), `-a <초>` (ANR 이후). 기본 -120s ~ +10s.
-
-생성된 `<원본>_anr_keyword_<키워드>.txt` 만 읽기.
-보고서는 `<원본>_anr_analysis_<키워드>.md` 로 저장 (1차 보고서 덮어쓰기 금지).
+**Runnable 분기**:
+- 메인 스레드 CPU 집약 작업 (큰 JSON, 이미지 디코딩, 큰 루프).
