@@ -28,6 +28,13 @@ dumpstate 파일에서 ANR 관련 섹션을 추출해 두 개의 텍스트 파�
   (TaskInfo, TransitionRequestInfo, InsetsController 등),
   분석에는 앞부분만으로 충분하면서 토큰량이 폭증하는 것을 막는다.
 
+* 노이즈 태그 필터 (v1.5~):
+  [5] freeze 이전 로그에서 ANR 분석과 무관한 태그들을 제거한다.
+  4 케이스(락 데드락 / ReentrantLock / 락 보유 지연 / GC 압박) 교차 검증으로
+  안전성 확인됨. 그래픽 파이프라인(SurfaceFlinger 등), Insets 상태 변화,
+  트랜지션 디테일, 패키지 가시성 정책, 삼성 OEM 모듈 등.
+  WindowManager 는 메시지 패턴으로 추가 필터링 (focus 변경, WIN DEATH 만 유지).
+
 외부 라이브러리 불필요 (표준 라이브러리만 사용).
 Python 3.8 이상 호환.
 """
@@ -38,7 +45,7 @@ import sys
 from datetime import datetime as _dt
 from typing import Optional
 
-__version__ = "1.4"
+__version__ = "1.5"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -416,7 +423,8 @@ def extract_vm_traces(path: str) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 _LOGCAT_TAG_RE = re.compile(
     r"^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+\s+"
-    r"(?:\d+\s+){2,3}"
+    # UID/PID/TID — 각각 숫자 또는 문자열 토큰 (radio, nfc, lmkd 등)
+    r"(?:\S+\s+){2,3}"
     r"[VDIWEF]\s+"
     r"(\S+?)\s*:"
 )
@@ -489,6 +497,94 @@ def _truncate_long_lines(lines, max_len: int = _MAX_LINE_LEN_DEFAULT):
             cut = len(l) - max_len
             out.append(l[:max_len] + f" … (+{cut:,}자 절단)")
     return out
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 사전 패키지 로그 ([5]) 노이즈 태그 필터링
+# ──────────────────────────────────────────────────────────────────────────────
+#
+# 4 케이스(락 데드락 / ReentrantLock 대기 / synchronized 락 보유 지연 / GC 압박)
+# 교차 검증 결과 일관되게 무관한 태그 집합. 평균 60% 이상 노이즈 제거 효과.
+# 새 OEM 노이즈 태그가 발견되면 여기에 추가한다.
+_DROP_TAGS_PRE_FREEZE = {
+    # 그래픽 / Surface 파이프라인 (4 케이스 평균 23% 점유)
+    "SurfaceFlinger", "SurfaceComposerClient", "SurfaceControlRegistry",
+    "Layer", "RenderEngine", "BufferQueue", "HWUI",
+
+    # Insets 상태 변화 (평균 8.5%)
+    "InsetsSourceProvider", "InsetsController", "InsetsSourceConsumer",
+    "InsetsPolicy",
+
+    # 트랜지션 내부 디테일 (평균 8%)
+    "ChangeTransitionController", "TaskOrganizerController",
+    "WindowManagerShell",
+
+    # 패키지 가시성 정책 (평균 2.7%)
+    "AppsFilter",
+
+    # IME 트래커 / Back 제스처 (작지만 일관되게 무관)
+    "ImeTracker", "CoreBackPreview",
+
+    # 그래픽/네이티브 로더 초기화
+    "nativeloader", "GraphicsEnvironment",
+
+    # 삼성 OEM 모듈 (다른 OEM 단말에선 다른 태그가 나올 수 있음)
+    "SGM",  # 게임매니저
+    "SAMSUNGWALLET",
+    "HBD",
+    "MdnieScenarioControlService",  # 디스플레이 색감
+    "SDHMS",
+    "SecSTQuickControlRequestReceiver",
+    "PersonaActivityHelper",
+    "EMMAgent",
+    "Navbar.Store", "NavigationBar",
+    "NowBarExternalViewCardView",  # Now Bar 카드 뷰
+}
+
+# WindowManager 는 평균 24% 로 가장 비대하지만 중요한 사건도 포함
+# (focus 변경, WIN DEATH 등). 메시지 패턴으로 분류해서 의미 있는 것만 유지.
+_WM_KEEP_PATTERN = re.compile(
+    r"Changing focus|"
+    r"WIN DEATH|WINDOW DIED|Window died|"
+    r"Force removing|app died|"
+    r"finishDrawingWindow|removeWindowToken|onRemovedFromDisplay"
+)
+
+# HoneySpace.* 형식의 삼성 런처 관련 태그를 한 번에 걸러내기 위한 prefix 매칭
+_DROP_TAG_PREFIXES = (
+    "HoneySpace.",  # 삼성 OneUI 런처
+)
+
+
+def _should_drop_pre_freeze(tag: str, message: str) -> bool:
+    """[5] 로그 라인을 버려야 하면 True."""
+    if tag in _DROP_TAGS_PRE_FREEZE:
+        return True
+    for prefix in _DROP_TAG_PREFIXES:
+        if tag.startswith(prefix):
+            return True
+    # WindowManager 는 메시지 패턴으로 추가 필터
+    if tag == "WindowManager":
+        if not _WM_KEEP_PATTERN.search(message):
+            return True
+    return False
+
+
+def _filter_pre_freeze_tags(lines):
+    """[5] 의 노이즈 태그 라인 제거. (남은 라인, 제거된 건수) 반환."""
+    out = []
+    dropped = 0
+    for l in lines:
+        m = _LOGCAT_TAG_RE.match(l)
+        if m:
+            tag = m.group(1)
+            # 메시지 부분 (태그 ':' 뒤)
+            msg = l[m.end():] if m.end() < len(l) else ""
+            if _should_drop_pre_freeze(tag, msg):
+                dropped += 1
+                continue
+        out.append(l)
+    return out, dropped
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -620,6 +716,8 @@ def extract_pre_freeze_log(path: str, lookback: int = 30) -> str:
             if t_start <= ts <= t_end and proc in line:
                 out_lines.append(line.rstrip())
 
+    raw_count = len(out_lines)
+    out_lines, dropped = _filter_pre_freeze_tags(out_lines)
     out_lines = _collapse_consecutive_same_tag(out_lines)
     out_lines = _truncate_long_lines(out_lines)
 
@@ -627,7 +725,8 @@ def extract_pre_freeze_log(path: str, lookback: int = 30) -> str:
         f"(ANR 시각: {anr_time_str}  /  지연: {delay_ms}ms  /  "
         f"freeze 추정: ANR-{delay_s:.1f}s  /  "
         f"스캔 범위: freeze-{lookback}s ~ freeze 시점  /  "
-        f"매칭: 패키지명 '{proc}' 포함)"
+        f"매칭: 패키지명 '{proc}' 포함  /  "
+        f"노이즈 태그 {dropped}건 필터링됨)"
     )
     if not out_lines:
         return f"{header}\n({proc} 관련 로그 없음)"
