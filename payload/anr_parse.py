@@ -35,12 +35,12 @@ dumpstate 파일에서 ANR 관련 섹션을 추출해 두 개의 텍스트 파�
   트랜지션 디테일, 패키지 가시성 정책, 삼성 OEM 모듈 등.
   WindowManager 는 메시지 패턴으로 추가 필터링 (focus 변경, WIN DEATH 만 유지).
 
-* 키워드 2차 분석 (v1.6~):
-  python anr_parse.py "<덤프>" -k <키워드> [-k <키워드2> ...] [-b <초>] [-a <초>]
+* 키워드 2차 분석 (v1.6~, v1.7 부터 전체 덤프 스캔):
+  python anr_parse.py "<덤프>" -k <키워드> [-k <키워드2> ...]
   1차 분석 후 사용자가 특정 키워드(예: Heimdall)로 더 파고들 때 사용.
-  ANR 시점 -before ~ +after 범위에서 키워드 포함 라인만 추출해
+  덤프 전체에서 키워드 포함 라인(대소문자 무시)을 모두 추출해
   <원본>_anr_keyword_<키워드>.txt 로 저장한다 (1차 결과 보존).
-  기본 범위 -120s ~ +10s. ANR 한참 전부터 동작하는 프로세스는 -b 300 권장.
+  연속 동일 태그 압축은 적용하지 않음 (사용자가 줄을 그대로 보길 원함).
 
 외부 라이브러리 불필요 (표준 라이브러리만 사용).
 Python 3.8 이상 호환.
@@ -52,7 +52,7 @@ import sys
 from datetime import datetime as _dt
 from typing import Optional
 
-__version__ = "1.6"
+__version__ = "1.7"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -741,49 +741,24 @@ def extract_pre_freeze_log(path: str, lookback: int = 30) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 키워드 2차 분석 — ANR 시점 부근에서 특정 키워드 포함 라인 추출
+# 키워드 2차 분석 — 덤프 전체에서 특정 키워드 포함 라인 추출
 # ──────────────────────────────────────────────────────────────────────────────
 
-def extract_keyword_window(path, keywords, window_before=120, window_after=10):
-    """ANR 시점 -window_before ~ +window_after 범위에서 keywords 중 하나라도
-    포함된 logcat 라인을 추출 (대소문자 무시). 연속 동일 태그 압축 + 라인 절단."""
-    anr_ts = None
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            if " am_anr" in line:
-                ts = _logcat_ts(line)
-                if ts is not None:
-                    anr_ts = ts
-
+def extract_keyword_lines(path, keywords):
+    """덤프 전체에서 keywords 중 하나라도 포함된 라인을 추출 (대소문자 무시).
+    연속 동일 태그 압축은 하지 않는다 (사용자가 줄을 그대로 보길 원함).
+    단일 거대 라인(객체 dump 폭증)만 절단해 토큰을 보호한다."""
     kws_lower = [k.lower() for k in keywords]
-    t_start = (anr_ts - window_before) if anr_ts else None
-    t_end   = (anr_ts + window_after)  if anr_ts else None
-    in_window = (anr_ts is None)
-
     matched = []
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
-            if anr_ts is not None:
-                ts = _logcat_ts(line)
-                if ts is not None:
-                    in_window = (t_start <= ts <= t_end)
-                    if ts > t_end + 60:
-                        break
-            if not in_window:
-                continue
             low = line.lower()
             if any(k in low for k in kws_lower):
                 matched.append(line.rstrip())
 
     raw_count = len(matched)
-    matched = _collapse_consecutive_same_tag(matched)
     matched = _truncate_long_lines(matched)
-
-    if anr_ts is not None:
-        scope = f"ANR 기준 -{window_before}s ~ +{window_after}s 범위 스캔"
-    else:
-        scope = "am_anr 이벤트 미발견 — 파일 전체 스캔"
-    header = f"(키워드: {', '.join(keywords)}  /  {scope}  /  매칭 {raw_count}건)"
+    header = f"(키워드: {', '.join(keywords)}  /  덤프 전체 스캔  /  매칭 {raw_count}건)"
     if not matched:
         return f"{header}\n(키워드 포함 라인 없음)"
     return header + "\n" + "\n".join(matched)
@@ -1082,7 +1057,7 @@ def parse_and_save(dumpstate_path: str) -> Optional[str]:
     return main_path
 
 
-def keyword_search_and_save(dumpstate_path, keywords, before=120, after=10):
+def keyword_search_and_save(dumpstate_path, keywords):
     """키워드 2차 분석 결과를 <원본>_anr_keyword_<키워드>.txt 로 저장."""
     dumpstate_path = dumpstate_path.strip().strip('"').strip("'")
     if not os.path.isfile(dumpstate_path):
@@ -1096,7 +1071,7 @@ def keyword_search_and_save(dumpstate_path, keywords, before=120, after=10):
     slug = "_".join(re.sub(r"[^\w.-]", "", k) for k in keywords) or "kw"
     out_path = f"{base}_anr_keyword_{slug}.txt"
 
-    body = extract_keyword_window(dumpstate_path, keywords, before, after)
+    body = extract_keyword_lines(dumpstate_path, keywords)
     output_lines = [
         "ANR 키워드 추가 분석",
         f"파서 버전 : {__version__}",
@@ -1116,38 +1091,25 @@ def keyword_search_and_save(dumpstate_path, keywords, before=120, after=10):
 
 
 def _parse_args(args):
-    """sys.argv 파싱. (path, keywords, before, after) 반환.
+    """sys.argv 파싱. (path, keywords) 반환.
     경로에 공백이 있어도 따옴표 없이 받을 수 있도록 플래그 외 토큰은 합친다."""
     keywords = []
-    before, after = 120, 10
     path_parts = []
     i = 0
     while i < len(args):
         a = args[i]
         if a in ("-k", "--keyword") and i + 1 < len(args):
             keywords.append(args[i + 1]); i += 2
-        elif a in ("-b", "--before") and i + 1 < len(args):
-            try:
-                before = int(args[i + 1])
-            except ValueError:
-                pass
-            i += 2
-        elif a in ("-a", "--after") and i + 1 < len(args):
-            try:
-                after = int(args[i + 1])
-            except ValueError:
-                pass
-            i += 2
         else:
             path_parts.append(a); i += 1
-    return " ".join(path_parts), keywords, before, after
+    return " ".join(path_parts), keywords
 
 
 def main():
     if len(sys.argv) > 1:
-        path, keywords, before, after = _parse_args(sys.argv[1:])
+        path, keywords = _parse_args(sys.argv[1:])
         if keywords:
-            keyword_search_and_save(path, keywords, before, after)
+            keyword_search_and_save(path, keywords)
         else:
             parse_and_save(path)
         return
