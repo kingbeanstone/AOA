@@ -42,12 +42,12 @@ if !errorlevel!==0 set "DL_OK=1"
 
 REM 2차: PowerShell Invoke-WebRequest (curl.exe 없는 구형 환경 폴백)
 if !DL_OK!==0 (
-    powershell -Command "Invoke-WebRequest -Uri '%DL_URL%' -OutFile '%TMP_ZIP%'" >nul 2>&1
+    powershell -Command "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '%DL_URL%' -OutFile '%TMP_ZIP%'" >nul 2>&1
     if !errorlevel!==0 set "DL_OK=1"
 )
 
 if !DL_OK!==1 (
-    powershell -Command "Expand-Archive -Path '%TMP_ZIP%' -DestinationPath '%TMP_DIR%' -Force" >nul 2>&1
+    powershell -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path '%TMP_ZIP%' -DestinationPath '%TMP_DIR%' -Force" >nul 2>&1
     set "EXTRACTED="
     for /D %%i in ("%TMP_DIR%\aoa2-*") do set "EXTRACTED=%%i"
     if defined EXTRACTED (

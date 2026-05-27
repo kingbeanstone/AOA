@@ -19,7 +19,7 @@ set "DL_OK=0"
 curl.exe -fsSL "%DL_URL%" -o "%TMP_ZIP%" >nul 2>&1
 if !errorlevel!==0 set "DL_OK=1"
 if !DL_OK!==0 (
-    powershell -Command "Invoke-WebRequest -Uri '%DL_URL%' -OutFile '%TMP_ZIP%'" >nul 2>&1
+    powershell -Command "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '%DL_URL%' -OutFile '%TMP_ZIP%'" >nul 2>&1
     if !errorlevel!==0 set "DL_OK=1"
 )
 if !DL_OK!==0 (
@@ -33,7 +33,7 @@ if !DL_OK!==0 (
 
 echo 파일 준비 중...
 if exist "%TMP_DIR%" rd /s /q "%TMP_DIR%" >nul 2>&1
-powershell -Command "Expand-Archive -Path '%TMP_ZIP%' -DestinationPath '%TMP_DIR%' -Force" >nul 2>&1
+powershell -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path '%TMP_ZIP%' -DestinationPath '%TMP_DIR%' -Force" >nul 2>&1
 del /q "%TMP_ZIP%" >nul 2>&1
 
 set "EXTRACTED="
