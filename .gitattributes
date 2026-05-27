@@ -1,8 +1,11 @@
 # Auto detect text files
 * text=auto
 
-# Windows batch files: force CRLF
-*.bat text eol=crlf
+# Windows batch files: store CRLF verbatim in the blob.
+# GitHub zip 다운로드는 raw blob 바이트를 그대로 담으므로, eol=crlf(blob을 LF로
+# 정규화)를 쓰면 zip 안 .bat이 LF가 되어 cmd.exe 가 줄 경계를 오인한다.
+# -text 로 바이트를 보존해 blob 에 CRLF 가 그대로 남게 한다.
+*.bat -text
 
 # Shell scripts: force LF
 *.sh text eol=lf
