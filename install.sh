@@ -2,8 +2,8 @@
 # ANR 분석 도구 설치 (Linux / macOS / WSL)
 # GitHub에서 최신 파일 자동 다운로드 (실패 시 로컬 payload/ 폴백)
 
-REPO="kingbeanstone/aoa2"
-BRANCH="claude/anr-analysis-tool-rz6Rv"
+REPO="kingbeanstone/AOA"
+BRANCH="main"
 DL_URL="https://github.com/$REPO/archive/refs/heads/$BRANCH.zip"
 TMP_ZIP="/tmp/anr-tool-latest.zip"
 TMP_DIR="/tmp/anr-tool-latest"
@@ -40,7 +40,7 @@ else
         rm -rf "$TMP_DIR"
         mkdir -p "$TMP_DIR"
         unzip -oq "$TMP_ZIP" -d "$TMP_DIR" 2>/dev/null
-        PAYLOAD_SRC=$(ls -d "$TMP_DIR"/aoa2-*/payload 2>/dev/null | head -1)
+        PAYLOAD_SRC=$(ls -d "$TMP_DIR"/AOA-*/payload 2>/dev/null | head -1)
         if [ -n "$PAYLOAD_SRC" ]; then
             echo "      OK: GitHub 최신 버전 다운로드 완료"
         else

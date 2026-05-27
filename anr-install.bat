@@ -8,8 +8,8 @@ echo   ANR 분석 도구 설치 준비 중...
 echo ============================================================
 echo.
 
-set "REPO=kingbeanstone/aoa2"
-set "BRANCH=claude/anr-analysis-tool-rz6Rv"
+set "REPO=kingbeanstone/AOA"
+set "BRANCH=main"
 set "DL_URL=https://github.com/%REPO%/archive/refs/heads/%BRANCH%.zip"
 set "TMP_ZIP=%TEMP%\anr-tool-latest.zip"
 set "TMP_DIR=%TEMP%\anr-tool-latest"
@@ -37,7 +37,7 @@ powershell -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Pat
 del /q "%TMP_ZIP%" >nul 2>&1
 
 set "EXTRACTED="
-for /D %%i in ("%TMP_DIR%\aoa2-*") do set "EXTRACTED=%%i"
+for /D %%i in ("%TMP_DIR%\AOA-*") do set "EXTRACTED=%%i"
 if not defined EXTRACTED (
     echo.
     echo [오류] 파일 준비에 실패했습니다. 관리자에게 문의하세요.

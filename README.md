@@ -1,4 +1,4 @@
-# ANR 분석 도구 (aoa2)
+# ANR 분석 도구 (AOA)
 
 VSCode + Cline 환경에서 안드로이드 ANR dumpstate 파일을 자동 분석하는 도구입니다.
 
@@ -6,7 +6,7 @@ VSCode + Cline 환경에서 안드로이드 ANR dumpstate 파일을 자동 분�
 
 ### Windows
 
-**[anr-install.bat 다운로드](https://github.com/kingbeanstone/aoa2/releases/latest/download/anr-install.bat)**  
+**[anr-install.bat 다운로드](https://github.com/kingbeanstone/AOA/releases/latest/download/anr-install.bat)**  
 위 링크 클릭 → 파일 더블클릭 → VSCode 재시작
 
 > 최신 버전을 GitHub에서 자동으로 받아 설치합니다.  
@@ -17,7 +17,7 @@ VSCode + Cline 환경에서 안드로이드 ANR dumpstate 파일을 자동 분�
 터미널에 아래 명령어를 붙여넣으세요.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kingbeanstone/aoa2/claude/anr-analysis-tool-rz6Rv/anr-install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kingbeanstone/AOA/main/anr-install.sh | bash
 ```
 
 > curl이 없으면: `wget -qO- <위 URL> | bash`
@@ -55,7 +55,7 @@ anr 분석해줘
 ## 구조
 
 ```
-aoa2/
+AOA/
   ├ anr-install.bat  ← 설치 스터브 (Windows용 배포 파일)
   ├ anr-install.sh   ← 설치 스터브 (Linux / macOS / WSL 배포 파일)
   ├ install.bat      ← 설치 스크립트 본체 (Windows)

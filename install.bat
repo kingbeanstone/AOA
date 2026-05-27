@@ -19,8 +19,8 @@ if /I not "%ARG1%"=="skip" (
 )
 
 REM --- 설정 --------------------------------------------------
-set "REPO=kingbeanstone/aoa2"
-set "BRANCH=claude/anr-analysis-tool-rz6Rv"
+set "REPO=kingbeanstone/AOA"
+set "BRANCH=main"
 set "DL_URL=https://github.com/%REPO%/archive/refs/heads/%BRANCH%.zip"
 set "TMP_ZIP=%TEMP%\anr-tool-latest.zip"
 set "TMP_DIR=%TEMP%\anr-tool-latest"
@@ -49,7 +49,7 @@ if !DL_OK!==0 (
 if !DL_OK!==1 (
     powershell -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path '%TMP_ZIP%' -DestinationPath '%TMP_DIR%' -Force" >nul 2>&1
     set "EXTRACTED="
-    for /D %%i in ("%TMP_DIR%\aoa2-*") do set "EXTRACTED=%%i"
+    for /D %%i in ("%TMP_DIR%\AOA-*") do set "EXTRACTED=%%i"
     if defined EXTRACTED (
         set "PAYLOAD=!EXTRACTED!\payload"
         echo       OK: GitHub 최신 버전 다운로드 완료

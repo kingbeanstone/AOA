@@ -2,8 +2,8 @@
 # ANR 분석 도구 설치 스터브 (Linux / macOS / WSL)
 # 이 파일 하나만 받아서 실행하면 됩니다
 
-REPO="kingbeanstone/aoa2"
-BRANCH="claude/anr-analysis-tool-rz6Rv"
+REPO="kingbeanstone/AOA"
+BRANCH="main"
 DL_URL="https://github.com/$REPO/archive/refs/heads/$BRANCH.zip"
 TMP_ZIP="/tmp/anr-tool-latest.zip"
 TMP_DIR="/tmp/anr-tool-latest"
@@ -36,7 +36,7 @@ mkdir -p "$TMP_DIR"
 unzip -oq "$TMP_ZIP" -d "$TMP_DIR" 2>/dev/null
 rm -f "$TMP_ZIP"
 
-EXTRACTED=$(ls -d "$TMP_DIR"/aoa2-*/ 2>/dev/null | head -1)
+EXTRACTED=$(ls -d "$TMP_DIR"/AOA-*/ 2>/dev/null | head -1)
 if [ -z "$EXTRACTED" ]; then
     echo ""
     echo "[오류] 파일 준비에 실패했습니다. 관리자에게 문의하세요."
