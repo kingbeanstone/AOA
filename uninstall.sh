@@ -4,13 +4,14 @@
 
 TOOL_DIR="$HOME/.anr-tool"
 CLAUDE_CMD="$HOME/.claude/commands/anr.md"
-CLINE_WORKFLOW="$HOME/Documents/Cline/Workflows/anr.md"
+CLINE_SKILL_DIR="$HOME/.cline/skills/anr"
 CURSOR_SKILL_DIR="$HOME/.cursor/skills/anr"
 
 # 구버전
 OLD_CLAUDE_MD="$HOME/.claude/CLAUDE.md"
 OLD_CLAUDE_IMPORT="@~/.anr-tool/zz-anr-rule.md"
 OLD_CLINE_RULE="$HOME/Documents/Cline/Rules/zz-anr-rule.md"
+OLD_CLINE_WORKFLOW="$HOME/Documents/Cline/Workflows/anr.md"
 
 echo "ANR 분석 도구 제거"
 echo ""
@@ -18,8 +19,14 @@ echo ""
 # 1. Claude Code 슬래시 커맨드
 [ -f "$CLAUDE_CMD" ] && rm -f "$CLAUDE_CMD" && echo "  Claude Code /anr 커맨드 제거"
 
-# 2. Cline 워크플로우
-[ -f "$CLINE_WORKFLOW" ] && rm -f "$CLINE_WORKFLOW" && echo "  Cline /anr 워크플로우 제거"
+# 2. Cline 스킬
+if [ -d "$CLINE_SKILL_DIR" ]; then
+    rm -rf "$CLINE_SKILL_DIR"
+    echo "  Cline /anr 스킬 제거"
+fi
+
+# 2-b. 구버전 Cline 워크플로우 잔재
+[ -f "$OLD_CLINE_WORKFLOW" ] && rm -f "$OLD_CLINE_WORKFLOW" && echo "  옛 Cline 워크플로우 제거"
 
 # 3. Cursor 스킬
 if [ -d "$CURSOR_SKILL_DIR" ]; then
@@ -29,6 +36,7 @@ fi
 
 # 4. 구버전 — Cline 글로벌 룰
 [ -f "$OLD_CLINE_RULE" ] && rm -f "$OLD_CLINE_RULE" && echo "  옛 Cline 글로벌 룰 제거"
+[ -f "$OLD_CLINE_WORKFLOW" ] && rm -f "$OLD_CLINE_WORKFLOW" && echo "  옛 Cline 워크플로우 제거"
 
 # 5. 구버전 — Claude Code import 한 줄
 if [ -f "$OLD_CLAUDE_MD" ] && grep -qF "$OLD_CLAUDE_IMPORT" "$OLD_CLAUDE_MD"; then
