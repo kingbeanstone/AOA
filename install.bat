@@ -5,11 +5,11 @@ setlocal enabledelayedexpansion
 
 REM ============================================================
 REM   ANR 분석 도구 설치 스크립트 (Windows)
-REM   Cline / Cursor / Claude Code 공용.
+REM   Cline / Cursor / Claude Code 공용 — 슬래시 커맨드 방식.
 REM   - 파서(anr_parse.py)    → %USERPROFILE%\.anr-tool\
-REM   - Cline 룰              → %USERPROFILE%\Documents\Cline\Rules\
-REM   - Claude Code 룰        → %USERPROFILE%\.claude\CLAUDE.md import 한 줄
-REM   - Cursor 전역 룰        → state.vscdb SQLite DB 에 Python 으로 직접 기록
+REM   - Claude Code 슬래시    → %USERPROFILE%\.claude\commands\anr.md
+REM   - Cline 워크플로우      → %USERPROFILE%\Documents\Cline\Workflows\anr.md
+REM   - Cursor 스킬           → %USERPROFILE%\.cursor\skills\anr\SKILL.md
 REM ============================================================
 
 if /I not "%ARG1%"=="skip" (
@@ -27,12 +27,17 @@ set "DL_URL=https://github.com/%REPO%/archive/refs/heads/%BRANCH%.zip"
 set "TMP_ZIP=%TEMP%\anr-tool-latest.zip"
 set "TMP_DIR=%TEMP%\anr-tool-latest"
 set "TOOL_DIR=%USERPROFILE%\.anr-tool"
-set "CLINE_RULES=%USERPROFILE%\Documents\Cline\Rules"
-set "CLAUDE_DIR=%USERPROFILE%\.claude"
-set "CLAUDE_MD=%CLAUDE_DIR%\CLAUDE.md"
+set "CLAUDE_CMDS=%USERPROFILE%\.claude\commands"
+set "CLINE_WORKFLOWS=%USERPROFILE%\Documents\Cline\Workflows"
+set "CURSOR_SKILL_DIR=%USERPROFILE%\.cursor\skills\anr"
+
+REM 구버전(글로벌 룰) 정리 대상
+set "OLD_CLAUDE_MD=%USERPROFILE%\.claude\CLAUDE.md"
+set "OLD_CLINE_RULE=%USERPROFILE%\Documents\Cline\Rules\zz-anr-rule.md"
+set "OLD_TOOL_RULE=%USERPROFILE%\.anr-tool\zz-anr-rule.md"
 
 REM --- 0. GitHub 최신 버전 다운로드 -------------------------
-echo [0/5] GitHub에서 최신 버전 다운로드 중...
+echo [0/6] GitHub에서 최신 버전 다운로드 중...
 if /I "%ARG1%"=="skip" (
     echo       OK: 최신 버전 준비 완료
     set "PAYLOAD=%~dp0payload"
@@ -64,7 +69,7 @@ if !DL_OK!==1 (
 echo.
 
 REM --- 1. Python 확인 ----------------------------------------
-echo [1/5] Python 확인 중...
+echo [1/6] Python 확인 중...
 set "PYTHON="
 where py >nul 2>&1 && set "PYTHON=py"
 if not defined PYTHON (
@@ -83,8 +88,8 @@ if defined PYTHON (
 echo.
 
 REM --- payload 파일 위치 확인 --------------------------------
-if not exist "%PAYLOAD%\zz-anr-rule.md" (
-    echo [오류] payload 폴더에서 룰 파일을 찾을 수 없습니다.
+if not exist "%PAYLOAD%\anr-rule.md" (
+    echo [오류] payload 폴더에서 필수 파일을 찾을 수 없습니다.
     echo        경로: %PAYLOAD%
     if /I not "%ARG1%"=="skip" (
         if exist "%TMP_ZIP%" del /q "%TMP_ZIP%" >nul 2>&1
@@ -93,32 +98,99 @@ if not exist "%PAYLOAD%\zz-anr-rule.md" (
     pause
     exit /b 1
 )
+if not exist "%PAYLOAD%\anr_parse.py" (
+    echo [오류] payload 폴더에서 파서 파일을 찾을 수 없습니다.
+    echo        경로: %PAYLOAD%
+    pause
+    exit /b 1
+)
 
 REM --- payload 에서 버전 추출 --------------------------------
 for /f "tokens=3 delims= " %%a in ('findstr /B "__version__" "%PAYLOAD%\anr_parse.py"') do set "PARSER_VER=%%~a"
-for /f "tokens=3 delims= " %%a in ('findstr /B "<!-- 버전:" "%PAYLOAD%\zz-anr-rule.md"') do set "RULE_VER=%%a"
+for /f "tokens=3 delims= " %%a in ('findstr /B "<!-- 버전:" "%PAYLOAD%\anr-rule.md"') do set "RULE_VER=%%a"
 if not defined PARSER_VER set "PARSER_VER=?"
 if not defined RULE_VER set "RULE_VER=?"
 
-REM --- 2. 공용 파일 배치 -------------------------------------
-echo [2/5] 공용 파일 배치  ^(파서 v%PARSER_VER% / 룰 v%RULE_VER%^)
-echo       위치: %TOOL_DIR%
+REM --- 2. 구버전(글로벌 룰) 정리 -----------------------------
+echo [2/6] 구버전(글로벌 룰) 정리
+set "CLEANED=0"
+if exist "%OLD_CLINE_RULE%" (
+    del /Q "%OLD_CLINE_RULE%"
+    echo       - 옛 Cline 글로벌 룰 제거
+    set "CLEANED=1"
+)
+if exist "%OLD_CLAUDE_MD%" (
+    findstr /C:"anr-tool/zz-anr-rule.md" "%OLD_CLAUDE_MD%" >nul 2>&1
+    if !errorlevel!==0 (
+        findstr /V /C:"anr-tool/zz-anr-rule.md" "%OLD_CLAUDE_MD%" > "%OLD_CLAUDE_MD%.tmp"
+        move /Y "%OLD_CLAUDE_MD%.tmp" "%OLD_CLAUDE_MD%" >nul
+        echo       - 옛 Claude Code import 제거 ^(CLAUDE.md 나머지 보존^)
+        set "CLEANED=1"
+    )
+)
+if exist "%OLD_TOOL_RULE%" (
+    del /Q "%OLD_TOOL_RULE%"
+    echo       - 옛 룰 정본 제거
+    set "CLEANED=1"
+)
+REM 옛 Cursor state.vscdb 마커 블록 제거 (Python 있을 때만)
+if defined PYTHON (
+    set "CURSOR_PY=%TEMP%\anr_cursor_cleanup.py"
+    > "!CURSOR_PY!" echo import os, sys, sqlite3, re
+    >> "!CURSOR_PY!" echo db_path = os.path.join(os.environ.get('APPDATA',''), 'Cursor', 'User', 'globalStorage', 'state.vscdb')
+    >> "!CURSOR_PY!" echo if not os.path.isfile(db_path): sys.exit(1)
+    >> "!CURSOR_PY!" echo START = '^<!-- ANR-TOOL-START --^>'; END = '^<!-- ANR-TOOL-END --^>'
+    >> "!CURSOR_PY!" echo try:
+    >> "!CURSOR_PY!" echo     conn = sqlite3.connect(db_path); cur = conn.cursor()
+    >> "!CURSOR_PY!" echo     cur.execute("SELECT value FROM ItemTable WHERE key='aicontext.personalContext'")
+    >> "!CURSOR_PY!" echo     row = cur.fetchone()
+    >> "!CURSOR_PY!" echo     if not row: conn.close(); sys.exit(1)
+    >> "!CURSOR_PY!" echo     pattern = re.compile(re.escape(START) + '.*?' + re.escape(END), re.DOTALL)
+    >> "!CURSOR_PY!" echo     if pattern.search(row[0]):
+    >> "!CURSOR_PY!" echo         cur.execute("UPDATE ItemTable SET value=? WHERE key='aicontext.personalContext'", (pattern.sub('', row[0]).strip(),))
+    >> "!CURSOR_PY!" echo         conn.commit(); conn.close(); sys.exit(0)
+    >> "!CURSOR_PY!" echo     conn.close(); sys.exit(1)
+    >> "!CURSOR_PY!" echo except Exception: sys.exit(1)
+    %PYTHON% "!CURSOR_PY!" >nul 2>&1
+    if !errorlevel!==0 (
+        echo       - 옛 Cursor 전역 룰 블록 제거 ^(state.vscdb^)
+        set "CLEANED=1"
+    )
+    del /q "!CURSOR_PY!" >nul 2>&1
+)
+if "!CLEANED!"=="0" echo       OK: 정리할 구버전 없음
+echo.
+
+REM --- 3. 공용 파서 배치 -------------------------------------
+echo [3/6] 파서 배치  ^(anr_parse.py v%PARSER_VER%^)
+echo       위치: %TOOL_DIR%\anr_parse.py
 if not exist "%TOOL_DIR%" mkdir "%TOOL_DIR%"
 copy /Y "%PAYLOAD%\anr_parse.py" "%TOOL_DIR%\anr_parse.py" >nul
 if !errorlevel! neq 0 (
     echo       실패. 파일 복사 오류.
     pause & exit /b 1
 )
-copy /Y "%PAYLOAD%\zz-anr-rule.md" "%TOOL_DIR%\zz-anr-rule.md" >nul
 if exist "%~dp0uninstall.bat" copy /Y "%~dp0uninstall.bat" "%TOOL_DIR%\uninstall.bat" >nul 2>&1
 echo       OK
 echo.
 
-REM --- 3. Cline 룰 배치 --------------------------------------
-echo [3/5] Cline 룰 배치
-echo       위치: %CLINE_RULES%
-if not exist "%CLINE_RULES%" mkdir "%CLINE_RULES%"
-copy /Y "%TOOL_DIR%\zz-anr-rule.md" "%CLINE_RULES%\zz-anr-rule.md" >nul
+REM --- 4. Claude Code 슬래시 커맨드 배치 ---------------------
+echo [4/6] Claude Code /anr 슬래시 커맨드 배치  ^(룰 v%RULE_VER%^)
+echo       위치: %CLAUDE_CMDS%\anr.md
+if not exist "%CLAUDE_CMDS%" mkdir "%CLAUDE_CMDS%"
+copy /Y "%PAYLOAD%\anr-rule.md" "%CLAUDE_CMDS%\anr.md" >nul
+if !errorlevel! neq 0 (
+    echo       실패.
+    pause & exit /b 1
+)
+echo       OK
+echo.
+
+REM --- 5. Cline 워크플로우 배치 ------------------------------
+echo [5/6] Cline /anr 워크플로우 배치  ^(룰 v%RULE_VER%^)
+echo       위치: %CLINE_WORKFLOWS%\anr.md
+if not exist "%CLINE_WORKFLOWS%" mkdir "%CLINE_WORKFLOWS%"
+copy /Y "%PAYLOAD%\anr-rule.md" "%CLINE_WORKFLOWS%\anr.md" >nul
 if !errorlevel! neq 0 (
     echo       실패. Documents 폴더 쓰기 권한 확인 필요.
     pause & exit /b 1
@@ -126,47 +198,16 @@ if !errorlevel! neq 0 (
 echo       OK
 echo.
 
-REM --- 4. Claude Code import 한 줄 멱등 추가 ----------------
-echo [4/5] Claude Code 룰 연결
-echo       위치: %CLAUDE_MD%
-if not exist "%CLAUDE_DIR%" mkdir "%CLAUDE_DIR%"
-findstr /C:"anr-tool/zz-anr-rule.md" "%CLAUDE_MD%" >nul 2>&1
-if !errorlevel!==0 (
-    echo       이미 등록됨 -- 건너뜀
-) else (
-    >> "%CLAUDE_MD%" echo.
-    >> "%CLAUDE_MD%" echo @~/.anr-tool/zz-anr-rule.md
-    echo       OK ^(CLAUDE.md 에 import 추가 -- 기존 내용은 보존^)
+REM --- 6. Cursor 스킬 배치 -----------------------------------
+echo [6/6] Cursor /anr 스킬 배치  ^(룰 v%RULE_VER%^)
+echo       위치: %CURSOR_SKILL_DIR%\SKILL.md
+if not exist "%CURSOR_SKILL_DIR%" mkdir "%CURSOR_SKILL_DIR%"
+copy /Y "%PAYLOAD%\anr-rule.md" "%CURSOR_SKILL_DIR%\SKILL.md" >nul
+if !errorlevel! neq 0 (
+    echo       실패.
+    pause & exit /b 1
 )
-echo.
-
-REM --- 5. Cursor 전역 룰 등록 (Python sqlite3) --------------
-echo [5/5] Cursor 전역 룰 등록
-if not defined PYTHON (
-    echo       건너뜀: Python 없음 ^(Python 설치 후 재실행하면 자동 등록^)
-) else (
-    set "CURSOR_PY=%TEMP%\anr_cursor_setup.py"
-    > "!CURSOR_PY!" echo import sys, os, sqlite3, re
-    >> "!CURSOR_PY!" echo rule_path = sys.argv[1]
-    >> "!CURSOR_PY!" echo with open(rule_path, 'r', encoding='utf-8') as f: rule_content = f.read()
-    >> "!CURSOR_PY!" echo db_path = os.path.join(os.environ.get('APPDATA',''), 'Cursor', 'User', 'globalStorage', 'state.vscdb')
-    >> "!CURSOR_PY!" echo if not os.path.isfile(db_path):
-    >> "!CURSOR_PY!" echo     print('      Cursor 미설치 -- 나중에 설치 후 anr-install 을 재실행하면 자동 등록됩니다.'); sys.exit(0)
-    >> "!CURSOR_PY!" echo START = '<!-- ANR-TOOL-START -->'; END = '<!-- ANR-TOOL-END -->'
-    >> "!CURSOR_PY!" echo block = f'{START}\n{rule_content}\n{END}'
-    >> "!CURSOR_PY!" echo conn = sqlite3.connect(db_path); cur = conn.cursor()
-    >> "!CURSOR_PY!" echo cur.execute("SELECT value FROM ItemTable WHERE key='aicontext.personalContext'")
-    >> "!CURSOR_PY!" echo row = cur.fetchone(); existing = row[0] if row else ''
-    >> "!CURSOR_PY!" echo pattern = re.compile(re.escape(START) + '.*?' + re.escape(END), re.DOTALL)
-    >> "!CURSOR_PY!" echo if pattern.search(existing):
-    >> "!CURSOR_PY!" echo     new_content = pattern.sub(block, existing); action = '업데이트'
-    >> "!CURSOR_PY!" echo else:
-    >> "!CURSOR_PY!" echo     new_content = (existing.rstrip() + '\n\n' + block).lstrip() if existing.strip() else block; action = '추가'
-    >> "!CURSOR_PY!" echo cur.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('aicontext.personalContext', ?)", (new_content,)); conn.commit(); conn.close()
-    >> "!CURSOR_PY!" echo print(f'      OK ({action} -- Cursor 재시작 후 Settings-^>Rules-^>User Rules 에서 확인 가능)')
-    %PYTHON% "!CURSOR_PY!" "%TOOL_DIR%\zz-anr-rule.md"
-    del /q "!CURSOR_PY!" >nul 2>&1
-)
+echo       OK
 echo.
 
 REM --- 임시 파일 정리 ----------------------------------------
@@ -181,23 +222,23 @@ echo   설치 완료
 echo ============================================================
 echo.
 echo 설치된 버전:
-echo   파서  : anr_parse.py      v%PARSER_VER%
-echo   룰    : zz-anr-rule.md    v%RULE_VER%
+echo   파서  : anr_parse.py    v%PARSER_VER%
+echo   룰    : anr-rule.md     v%RULE_VER%
 echo.
-echo 사용 방법 ^(공통^):
-echo   AI 어시스턴트 채팅에 덤프 경로 + "anr" 를 입력 후 Enter:
-echo      예^) C:\path\to\dumpstate.txt anr
-echo      예^) "C:\My Logs\dump.txt" anr
+echo 사용 방법 ^(공통 -- 모든 툴에서 동일^):
+echo   AI 어시스턴트 채팅에서 슬래시 커맨드로 호출:
+echo      /anr C:\path\to\dumpstate.txt
+echo      /anr "C:\My Logs\dump.txt"
 echo.
-echo   - Cline      : VSCode 재시작 후 Cline 채팅에 입력
-echo   - Claude Code: 새 세션에서 바로 입력 ^(CLAUDE.md 자동 로드^)
-echo   - Cursor     : Cursor 재시작 후 채팅^(Ctrl/Cmd+L^)에 입력
+echo   - Claude Code: 새 세션부터 즉시 사용 가능
+echo   - Cline      : VSCode 재시작 후 사용
+echo   - Cursor     : Cursor 재시작 후 사용
 echo.
 echo 설치된 위치:
-echo   파서/룰 정본 : %TOOL_DIR%\
-echo   Cline 룰     : %CLINE_RULES%\zz-anr-rule.md
-echo   Claude Code  : %CLAUDE_MD%  ^(import 한 줄^)
-echo   Cursor 룰    : Cursor User Rules ^(state.vscdb^)
+echo   파서        : %TOOL_DIR%\anr_parse.py
+echo   Claude Code : %CLAUDE_CMDS%\anr.md
+echo   Cline       : %CLINE_WORKFLOWS%\anr.md
+echo   Cursor      : %CURSOR_SKILL_DIR%\SKILL.md
 echo.
 echo 제거하려면: %TOOL_DIR%\uninstall.bat 실행
 echo.
