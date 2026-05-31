@@ -6,10 +6,10 @@ setlocal enabledelayedexpansion
 REM ============================================================
 REM   ANR 분석 도구 설치 스크립트 (Windows)
 REM   Cline / Cursor / Claude Code 공용.
-REM   - 파서(anr_parse.py)는 공용이라 %USERPROFILE%\.anr-tool 에 한 번만 배치
-REM   - 룰(zz-anr-rule.md)은 툴마다 읽는 위치가 달라 각 위치에 배치
-REM   - Cline / Claude Code 는 고정 전역 경로라 미설치여도 미리 배치(무해)
-REM   - Cursor 는 전역 룰 파일이 없어 .mdc 정본 준비 후 안내
+REM   - 파서(anr_parse.py)    → %USERPROFILE%\.anr-tool\
+REM   - Cline 룰              → %USERPROFILE%\Documents\Cline\Rules\
+REM   - Claude Code 룰        → %USERPROFILE%\.claude\CLAUDE.md import 한 줄
+REM   - Cursor 전역 룰        → state.vscdb SQLite DB 에 Python 으로 직접 기록
 REM ============================================================
 
 if /I not "%ARG1%"=="skip" (
@@ -39,17 +39,12 @@ if /I "%ARG1%"=="skip" (
     goto SKIP_DOWNLOAD
 )
 set "DL_OK=0"
-
-REM 1차: curl.exe (Windows 10 1803 이상 내장)
 curl.exe -fsSL "%DL_URL%" -o "%TMP_ZIP%" >nul 2>&1
 if !errorlevel!==0 set "DL_OK=1"
-
-REM 2차: PowerShell Invoke-WebRequest (curl.exe 없는 구형 환경 폴백)
 if !DL_OK!==0 (
     powershell -Command "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '%DL_URL%' -OutFile '%TMP_ZIP%'" >nul 2>&1
     if !errorlevel!==0 set "DL_OK=1"
 )
-
 if !DL_OK!==1 (
     powershell -Command "$ProgressPreference='SilentlyContinue'; Expand-Archive -Path '%TMP_ZIP%' -DestinationPath '%TMP_DIR%' -Force" >nul 2>&1
     set "EXTRACTED="
@@ -65,24 +60,25 @@ if !DL_OK!==1 (
     echo       GitHub 연결 실패 -- 로컬 파일로 설치합니다.
     set "PAYLOAD=%~dp0payload"
 )
-
 :SKIP_DOWNLOAD
 echo.
 
 REM --- 1. Python 확인 ----------------------------------------
 echo [1/5] Python 확인 중...
-where py >nul 2>&1
-if %errorlevel%==0 (
-    echo       OK: py 명령 사용 가능
+set "PYTHON="
+where py >nul 2>&1 && set "PYTHON=py"
+if not defined PYTHON (
+    where python >nul 2>&1 && set "PYTHON=python"
+)
+if not defined PYTHON (
+    where python3 >nul 2>&1 && set "PYTHON=python3"
+)
+if defined PYTHON (
+    echo       OK: %PYTHON% 사용 가능
 ) else (
-    where python >nul 2>&1
-    if !errorlevel!==0 (
-        echo       OK: python 명령 사용 가능
-    ) else (
-        echo       경고: Python이 설치되지 않은 것 같습니다.
-        echo             사내 SW센터에서 Python 설치 후 다시 실행하세요.
-        echo             ^(설치 자체는 계속 진행됩니다^)
-    )
+    echo       경고: Python이 설치되지 않은 것 같습니다.
+    echo             사내 SW센터에서 Python 설치 후 다시 실행하세요.
+    echo             ^(설치 자체는 계속 진행됩니다^)
 )
 echo.
 
@@ -90,7 +86,6 @@ REM --- payload 파일 위치 확인 --------------------------------
 if not exist "%PAYLOAD%\zz-anr-rule.md" (
     echo [오류] payload 폴더에서 룰 파일을 찾을 수 없습니다.
     echo        경로: %PAYLOAD%
-    echo        GitHub 연결에 실패한 경우 payload\ 폴더가 install.bat과 같은 위치에 있는지 확인하세요.
     if /I not "%ARG1%"=="skip" (
         if exist "%TMP_ZIP%" del /q "%TMP_ZIP%" >nul 2>&1
         if exist "%TMP_DIR%" rd /s /q "%TMP_DIR%" >nul 2>&1
@@ -99,49 +94,39 @@ if not exist "%PAYLOAD%\zz-anr-rule.md" (
     exit /b 1
 )
 
-REM --- payload 에서 버전 추출 (하드코딩 방지) -------------
+REM --- payload 에서 버전 추출 --------------------------------
 for /f "tokens=3 delims= " %%a in ('findstr /B "__version__" "%PAYLOAD%\anr_parse.py"') do set "PARSER_VER=%%~a"
 for /f "tokens=3 delims= " %%a in ('findstr /B "<!-- 버전:" "%PAYLOAD%\zz-anr-rule.md"') do set "RULE_VER=%%a"
 if not defined PARSER_VER set "PARSER_VER=?"
 if not defined RULE_VER set "RULE_VER=?"
 
-REM --- 2. 공용 파일 배치 (파서 + 룰 정본 + Cursor mdc) -----
+REM --- 2. 공용 파일 배치 -------------------------------------
 echo [2/5] 공용 파일 배치  ^(파서 v%PARSER_VER% / 룰 v%RULE_VER%^)
 echo       위치: %TOOL_DIR%
 if not exist "%TOOL_DIR%" mkdir "%TOOL_DIR%"
 copy /Y "%PAYLOAD%\anr_parse.py" "%TOOL_DIR%\anr_parse.py" >nul
 if !errorlevel! neq 0 (
-    echo       실패.
-    pause
-    exit /b 1
+    echo       실패. 파일 복사 오류.
+    pause & exit /b 1
 )
 copy /Y "%PAYLOAD%\zz-anr-rule.md" "%TOOL_DIR%\zz-anr-rule.md" >nul
-REM Cursor 프로젝트 룰(.cursor/rules)용 .mdc 정본 생성 (frontmatter + 룰 본문)
-set "CURSOR_MDC=%TOOL_DIR%\anr-analysis.mdc"
-> "%CURSOR_MDC%" echo ---
->> "%CURSOR_MDC%" echo description: Android ANR dumpstate analysis. Apply when an ANR/dumpstate file path is given with an analysis request (path + "anr").
->> "%CURSOR_MDC%" echo alwaysApply: false
->> "%CURSOR_MDC%" echo ---
->> "%CURSOR_MDC%" echo.
-type "%TOOL_DIR%\zz-anr-rule.md" >> "%CURSOR_MDC%"
 if exist "%~dp0uninstall.bat" copy /Y "%~dp0uninstall.bat" "%TOOL_DIR%\uninstall.bat" >nul 2>&1
 echo       OK
 echo.
 
-REM --- 3. Cline 룰 배치 (고정 전역 경로, 미설치여도 미리 배치) ---
+REM --- 3. Cline 룰 배치 --------------------------------------
 echo [3/5] Cline 룰 배치
 echo       위치: %CLINE_RULES%
 if not exist "%CLINE_RULES%" mkdir "%CLINE_RULES%"
 copy /Y "%TOOL_DIR%\zz-anr-rule.md" "%CLINE_RULES%\zz-anr-rule.md" >nul
 if !errorlevel! neq 0 (
-    echo       실패. Documents 폴더에 쓰기 권한이 있는지 확인하세요.
-    pause
-    exit /b 1
+    echo       실패. Documents 폴더 쓰기 권한 확인 필요.
+    pause & exit /b 1
 )
 echo       OK
 echo.
 
-REM --- 4. Claude Code: CLAUDE.md 에 import 한 줄 멱등 추가 ---
+REM --- 4. Claude Code import 한 줄 멱등 추가 ----------------
 echo [4/5] Claude Code 룰 연결
 echo       위치: %CLAUDE_MD%
 if not exist "%CLAUDE_DIR%" mkdir "%CLAUDE_DIR%"
@@ -155,16 +140,36 @@ if !errorlevel!==0 (
 )
 echo.
 
-REM --- 5. Cursor 안내 (전역 룰 파일 없음) -------------------
-echo [5/5] Cursor 안내
-echo       Cursor 는 전역 룰 파일이 없어 자동 배치가 안 됩니다. 둘 중 하나:
-echo       ^(A^) 전역: Cursor 설정 - Rules - User Rules 에 아래 파일 내용을 붙여넣기 ^(1회^)
-echo           %TOOL_DIR%\zz-anr-rule.md
-echo       ^(B^) 프로젝트별: 분석할 프로젝트에서 .cursor\rules 폴더를 만들고
-echo           %CURSOR_MDC% 를 그 안에 복사
+REM --- 5. Cursor 전역 룰 등록 (Python sqlite3) --------------
+echo [5/5] Cursor 전역 룰 등록
+if not defined PYTHON (
+    echo       건너뜀: Python 없음 ^(Python 설치 후 재실행하면 자동 등록^)
+) else (
+    set "CURSOR_PY=%TEMP%\anr_cursor_setup.py"
+    > "!CURSOR_PY!" echo import sys, os, sqlite3, re
+    >> "!CURSOR_PY!" echo rule_path = sys.argv[1]
+    >> "!CURSOR_PY!" echo with open(rule_path, 'r', encoding='utf-8') as f: rule_content = f.read()
+    >> "!CURSOR_PY!" echo db_path = os.path.join(os.environ.get('APPDATA',''), 'Cursor', 'User', 'globalStorage', 'state.vscdb')
+    >> "!CURSOR_PY!" echo if not os.path.isfile(db_path):
+    >> "!CURSOR_PY!" echo     print('      Cursor 미설치 -- 나중에 설치 후 anr-install 을 재실행하면 자동 등록됩니다.'); sys.exit(0)
+    >> "!CURSOR_PY!" echo START = '<!-- ANR-TOOL-START -->'; END = '<!-- ANR-TOOL-END -->'
+    >> "!CURSOR_PY!" echo block = f'{START}\n{rule_content}\n{END}'
+    >> "!CURSOR_PY!" echo conn = sqlite3.connect(db_path); cur = conn.cursor()
+    >> "!CURSOR_PY!" echo cur.execute("SELECT value FROM ItemTable WHERE key='aicontext.personalContext'")
+    >> "!CURSOR_PY!" echo row = cur.fetchone(); existing = row[0] if row else ''
+    >> "!CURSOR_PY!" echo pattern = re.compile(re.escape(START) + '.*?' + re.escape(END), re.DOTALL)
+    >> "!CURSOR_PY!" echo if pattern.search(existing):
+    >> "!CURSOR_PY!" echo     new_content = pattern.sub(block, existing); action = '업데이트'
+    >> "!CURSOR_PY!" echo else:
+    >> "!CURSOR_PY!" echo     new_content = (existing.rstrip() + '\n\n' + block).lstrip() if existing.strip() else block; action = '추가'
+    >> "!CURSOR_PY!" echo cur.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('aicontext.personalContext', ?)", (new_content,)); conn.commit(); conn.close()
+    >> "!CURSOR_PY!" echo print(f'      OK ({action} -- Cursor 재시작 후 Settings-^>Rules-^>User Rules 에서 확인 가능)')
+    %PYTHON% "!CURSOR_PY!" "%TOOL_DIR%\zz-anr-rule.md"
+    del /q "!CURSOR_PY!" >nul 2>&1
+)
 echo.
 
-REM --- 임시 파일 정리 (직접 실행 시만) ------------------
+REM --- 임시 파일 정리 ----------------------------------------
 if /I not "%ARG1%"=="skip" (
     if exist "%TMP_ZIP%" del /q "%TMP_ZIP%" >nul 2>&1
     if exist "%TMP_DIR%" rd /s /q "%TMP_DIR%" >nul 2>&1
@@ -186,13 +191,13 @@ echo      예^) "C:\My Logs\dump.txt" anr
 echo.
 echo   - Cline      : VSCode 재시작 후 Cline 채팅에 입력
 echo   - Claude Code: 새 세션에서 바로 입력 ^(CLAUDE.md 자동 로드^)
-echo   - Cursor     : 위 [5/5] 안내대로 룰 등록 후 채팅^(Ctrl/Cmd+L^)에 입력
+echo   - Cursor     : Cursor 재시작 후 채팅^(Ctrl/Cmd+L^)에 입력
 echo.
 echo 설치된 위치:
 echo   파서/룰 정본 : %TOOL_DIR%\
 echo   Cline 룰     : %CLINE_RULES%\zz-anr-rule.md
 echo   Claude Code  : %CLAUDE_MD%  ^(import 한 줄^)
-echo   Cursor mdc   : %CURSOR_MDC%
+echo   Cursor 룰    : Cursor User Rules ^(state.vscdb^)
 echo.
 echo 제거하려면: %TOOL_DIR%\uninstall.bat 실행
 echo.

@@ -1,12 +1,12 @@
 #!/bin/bash
 # ANR 분석 도구 설치 (Linux / macOS / WSL)
 # Cline / Cursor / Claude Code 공용.
-#   - 파서(anr_parse.py)는 공용이라 ~/.anr-tool 에 한 번만 배치한다.
-#   - 룰(zz-anr-rule.md)은 툴마다 읽는 위치가 달라 각 위치에 배치한다.
-#   - Cline / Claude Code 는 고정 전역 경로를 쓰므로 해당 툴이 아직 없어도
-#     미리 배치해 둔다(무해). 나중에 그 툴을 설치하면 바로 인식된다.
-#   - Cursor 는 전역 룰 파일이 없어 ~/.anr-tool/anr-analysis.mdc 를 준비하고
-#     사용 방법을 안내한다.
+#   - 파서(anr_parse.py)    → ~/.anr-tool/ (공용)
+#   - Cline 룰              → ~/Documents/Cline/Rules/ (파일 복사, 미설치여도 미리 배치)
+#   - Claude Code 룰        → ~/.claude/CLAUDE.md 에 import 한 줄 (미설치여도 미리 배치)
+#   - Cursor 전역 룰        → Cursor state.vscdb SQLite DB 에 직접 기록
+#                             (Python 내장 sqlite3 사용 — 추가 의존성 없음)
+#                             Cursor 미설치면 건너뛰고 나중에 재실행 시 자동 등록
 # GitHub에서 최신 파일 자동 다운로드 (실패 시 로컬 payload/ 폴백)
 
 REPO="kingbeanstone/AOA"
@@ -17,14 +17,10 @@ TMP_DIR="/tmp/anr-tool-latest"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# 공용 도구 폴더 (파서 + 룰 정본 + Cursor용 mdc)
 TOOL_DIR="$HOME/.anr-tool"
-# Cline 글로벌 룰 폴더 (고정 전역 경로)
 CLINE_RULES="$HOME/Documents/Cline/Rules"
-# Claude Code 글로벌 메모리 파일 (고정 전역 경로)
 CLAUDE_DIR="$HOME/.claude"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
-# Claude Code 가 룰 정본을 불러오도록 추가하는 import 한 줄
 CLAUDE_IMPORT="@~/.anr-tool/zz-anr-rule.md"
 
 SKIP_DL=0
@@ -71,9 +67,12 @@ echo ""
 
 # 1. Python 확인
 echo "[1/5] Python 확인 중..."
+PYTHON=""
 if command -v python3 &>/dev/null; then
+    PYTHON="python3"
     echo "      OK: python3 사용 가능"
 elif command -v python &>/dev/null; then
+    PYTHON="python"
     echo "      OK: python 사용 가능"
 else
     echo "      경고: Python이 설치되지 않은 것 같습니다."
@@ -86,7 +85,6 @@ echo ""
 if [ ! -f "$PAYLOAD_SRC/zz-anr-rule.md" ]; then
     echo "[오류] payload 폴더에서 룰 파일을 찾을 수 없습니다."
     echo "       경로: $PAYLOAD_SRC"
-    echo "       GitHub 연결에 실패한 경우 payload/ 폴더가 install.sh와 같은 위치에 있는지 확인하세요."
     if [ "$SKIP_DL" -eq 0 ]; then
         rm -f "$TMP_ZIP" 2>/dev/null
         rm -rf "$TMP_DIR" 2>/dev/null
@@ -100,24 +98,13 @@ RULE_VER=$(grep -m1 '^<!-- 버전:' "$PAYLOAD_SRC/zz-anr-rule.md" 2>/dev/null | 
 [ -z "$PARSER_VER" ] && PARSER_VER="?"
 [ -z "$RULE_VER" ] && RULE_VER="?"
 
-# 2. 공용 파일 배치 (파서 + 룰 정본 + Cursor용 mdc)
+# 2. 공용 파일 배치 (파서 + 룰 정본)
 echo "[2/5] 공용 파일 배치  (파서 v${PARSER_VER} / 룰 v${RULE_VER})"
 echo "      위치: $TOOL_DIR"
 mkdir -p "$TOOL_DIR"
 cp "$PAYLOAD_SRC/anr_parse.py" "$TOOL_DIR/anr_parse.py"
 chmod +x "$TOOL_DIR/anr_parse.py"
 cp "$PAYLOAD_SRC/zz-anr-rule.md" "$TOOL_DIR/zz-anr-rule.md"
-# Cursor 프로젝트 룰(.cursor/rules)용 .mdc 정본 생성 (frontmatter + 룰 본문)
-CURSOR_MDC="$TOOL_DIR/anr-analysis.mdc"
-{
-    echo "---"
-    echo "description: Android ANR dumpstate analysis. Apply when an ANR/dumpstate file path is given with an analysis request (path + \"anr\")."
-    echo "alwaysApply: false"
-    echo "---"
-    echo ""
-    cat "$TOOL_DIR/zz-anr-rule.md"
-} > "$CURSOR_MDC"
-# uninstall.sh 도 함께 보관
 UNINSTALL_SRC="$(dirname "$PAYLOAD_SRC")/uninstall.sh"
 if [ -f "$UNINSTALL_SRC" ]; then
     cp "$UNINSTALL_SRC" "$TOOL_DIR/uninstall.sh"
@@ -146,13 +133,60 @@ else
 fi
 echo ""
 
-# 5. Cursor — 전역 룰 파일이 없어 안내만 (mdc 정본은 위에서 준비됨)
-echo "[5/5] Cursor 안내"
-echo "      Cursor 는 전역 룰 파일이 없어 자동 배치가 안 됩니다. 둘 중 하나:"
-echo "      (A) 전역: Cursor 설정 → Rules → User Rules 에 아래 파일 내용을 붙여넣기 (1회)"
-echo "          $TOOL_DIR/zz-anr-rule.md"
-echo "      (B) 프로젝트별: 분석할 프로젝트에서"
-echo "          mkdir -p .cursor/rules && cp \"$CURSOR_MDC\" .cursor/rules/"
+# 5. Cursor — state.vscdb 에 전역 룰 직접 기록 (Python 내장 sqlite3)
+#    Cursor User Rules 는 Settings → Rules → User Rules 와 동일한 위치에 저장된다.
+#    DB 키: aicontext.personalContext
+#    ANR 룰은 <!-- ANR-TOOL-START/END --> 마커로 감싸 멱등 삽입/갱신한다.
+echo "[5/5] Cursor 전역 룰 등록"
+if [ -z "$PYTHON" ]; then
+    echo "      건너뜀: Python 없음 (Python 설치 후 재실행하면 자동 등록)"
+else
+    $PYTHON - "$TOOL_DIR/zz-anr-rule.md" <<'PYEOF'
+import sys, os, sqlite3
+
+rule_path = sys.argv[1]
+with open(rule_path, 'r', encoding='utf-8') as f:
+    rule_content = f.read()
+
+home = os.path.expanduser('~')
+db_candidates = [
+    os.path.join(home, '.config', 'Cursor', 'User', 'globalStorage', 'state.vscdb'),
+    os.path.join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb'),
+]
+
+db_path = next((c for c in db_candidates if os.path.isfile(c)), None)
+if db_path is None:
+    print('      Cursor 미설치 — 나중에 설치 후 anr-install 을 재실행하면 자동 등록됩니다.')
+    sys.exit(0)
+
+START = '<!-- ANR-TOOL-START -->'
+END   = '<!-- ANR-TOOL-END -->'
+block = f'{START}\n{rule_content}\n{END}'
+
+conn = sqlite3.connect(db_path)
+cur  = conn.cursor()
+cur.execute("SELECT value FROM ItemTable WHERE key='aicontext.personalContext'")
+row = cur.fetchone()
+existing = row[0] if row else ''
+
+import re
+pattern = re.compile(re.escape(START) + '.*?' + re.escape(END), re.DOTALL)
+
+if pattern.search(existing):
+    # 이미 있으면 최신 룰로 교체 (업데이트)
+    new_content = pattern.sub(block, existing)
+    action = '업데이트'
+else:
+    # 없으면 기존 내용 뒤에 추가
+    new_content = (existing.rstrip() + '\n\n' + block).lstrip() if existing.strip() else block
+    action = '추가'
+
+cur.execute("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('aicontext.personalContext', ?)", (new_content,))
+conn.commit()
+conn.close()
+print(f'      OK ({action} 완료 — Cursor 재시작 후 Settings→Rules→User Rules 에서 확인 가능)')
+PYEOF
+fi
 echo ""
 
 # 임시 파일 정리 (직접 실행 시만)
@@ -177,13 +211,13 @@ echo "     예) ~/Downloads/bugreport.txt anr"
 echo ""
 echo "  - Cline      : VSCode 재시작 후 Cline 채팅에 입력"
 echo "  - Claude Code: 새 세션에서 바로 입력 (CLAUDE.md 자동 로드)"
-echo "  - Cursor     : 위 [5/5] 안내대로 룰 등록 후 채팅(Ctrl/Cmd+L)에 입력"
+echo "  - Cursor     : Cursor 재시작 후 채팅(Ctrl/Cmd+L)에 입력"
 echo ""
 echo "설치된 위치:"
 echo "  파서/룰 정본 : $TOOL_DIR/"
 echo "  Cline 룰     : $CLINE_RULES/zz-anr-rule.md"
 echo "  Claude Code  : $CLAUDE_MD  (import 한 줄)"
-echo "  Cursor mdc   : $CURSOR_MDC"
+echo "  Cursor 룰    : Cursor User Rules (state.vscdb)"
 echo ""
 echo "제거하려면: bash $TOOL_DIR/uninstall.sh"
 echo ""

@@ -32,22 +32,17 @@ curl -fsSL https://raw.githubusercontent.com/kingbeanstone/AOA/main/anr-install.
 
 ## 툴별 적용 방법
 
-설치 스크립트는 파서를 `~/.anr-tool/` 에 두고, 룰을 각 툴이 읽는 위치에 배치합니다.
+설치 스크립트가 파서와 룰을 세 툴 모두에 자동으로 배치합니다.
 
 | 툴 | 룰 위치 | 설치 후 할 일 |
 |----|--------|-------------|
 | **Cline** | `~/Documents/Cline/Rules/zz-anr-rule.md` | VSCode 재시작 |
 | **Claude Code** | `~/.claude/CLAUDE.md` 에 import 한 줄 추가 | 없음 (새 세션부터 자동) |
-| **Cursor** | 전역 룰 파일 없음 → 아래 1회 등록 | 1회 등록 |
+| **Cursor** | Cursor User Rules (state.vscdb) 에 직접 기록 | Cursor 재시작 |
 
-### Cursor 등록 (둘 중 하나)
-
-- **전역 (모든 프로젝트)**: Cursor 설정 → Rules → **User Rules** 에
-  `~/.anr-tool/zz-anr-rule.md` 파일 내용을 붙여넣기 (1회).
-- **프로젝트별**: 분석할 프로젝트에서
-  ```bash
-  mkdir -p .cursor/rules && cp ~/.anr-tool/anr-analysis.mdc .cursor/rules/
-  ```
+> Cline / Claude Code 는 툴이 아직 없어도 미리 배치합니다.  
+> 나중에 설치하면 별도 작업 없이 바로 인식됩니다.  
+> Cursor 가 없으면 건너뛰고, 나중에 설치 후 재실행하면 자동 등록됩니다.
 
 ## 사용법
 
@@ -72,9 +67,8 @@ anr 분석해줘
 - Windows: `%USERPROFILE%\.anr-tool\uninstall.bat` 실행
 - Linux / macOS / WSL: `bash ~/.anr-tool/uninstall.sh` 실행
 
-> Cline 룰 복사본과 Claude Code import 한 줄, 공용 도구 폴더를 정리합니다.
-> Claude Code 의 `CLAUDE.md` 는 import 한 줄만 제거하고 나머지 내용은 보존합니다.
-> Cursor 프로젝트에 직접 복사한 `.cursor/rules/anr-analysis.mdc` 는 수동 삭제하세요.
+> Cline 룰, Claude Code import, Cursor User Rules, 공용 도구 폴더를 모두 정리합니다.  
+> `CLAUDE.md` 는 import 한 줄만 제거하고 나머지 내용을 보존합니다.
 
 ## 요구사항
 

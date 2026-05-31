@@ -1,6 +1,5 @@
 #!/bin/bash
 # ANR 분석 도구 제거 (Linux / macOS / WSL)
-# Cline 룰 복사본, Claude Code import 한 줄, 공용 도구 폴더를 모두 정리한다.
 
 TOOL_DIR="$HOME/.anr-tool"
 CLINE_RULES="$HOME/Documents/Cline/Rules"
@@ -19,13 +18,49 @@ if [ -f "$CLAUDE_MD" ] && grep -qF "$CLAUDE_IMPORT" "$CLAUDE_MD"; then
     echo "  Claude Code import 제거 완료 (CLAUDE.md 의 나머지는 유지)"
 fi
 
-# 3. 공용 도구 폴더 (파서 + 룰 정본 + Cursor mdc)
-[ -f "$TOOL_DIR/anr_parse.py" ]      && rm -f "$TOOL_DIR/anr_parse.py"      && echo "  파서 삭제 완료"
-[ -f "$TOOL_DIR/zz-anr-rule.md" ]    && rm -f "$TOOL_DIR/zz-anr-rule.md"
-[ -f "$TOOL_DIR/anr-analysis.mdc" ]  && rm -f "$TOOL_DIR/anr-analysis.mdc"
-[ -f "$TOOL_DIR/uninstall.sh" ]      && rm -f "$TOOL_DIR/uninstall.sh"
-[ -d "$TOOL_DIR" ]                   && rmdir "$TOOL_DIR" 2>/dev/null && echo "  도구 폴더 삭제 완료"
+# 3. Cursor 전역 룰 제거 (state.vscdb 에서 ANR-TOOL 마커 블록만 삭제)
+PYTHON=""
+command -v python3 &>/dev/null && PYTHON="python3"
+[ -z "$PYTHON" ] && command -v python &>/dev/null && PYTHON="python"
+if [ -n "$PYTHON" ]; then
+    $PYTHON - <<'PYEOF'
+import os, sys, sqlite3, re
+
+home = os.path.expanduser('~')
+db_candidates = [
+    os.path.join(home, '.config', 'Cursor', 'User', 'globalStorage', 'state.vscdb'),
+    os.path.join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb'),
+]
+db_path = next((c for c in db_candidates if os.path.isfile(c)), None)
+if db_path is None:
+    sys.exit(0)
+
+START = '<!-- ANR-TOOL-START -->'
+END   = '<!-- ANR-TOOL-END -->'
+conn = sqlite3.connect(db_path)
+cur  = conn.cursor()
+cur.execute("SELECT value FROM ItemTable WHERE key='aicontext.personalContext'")
+row = cur.fetchone()
+if not row:
+    conn.close()
+    sys.exit(0)
+
+existing = row[0]
+pattern  = re.compile(re.escape(START) + '.*?' + re.escape(END), re.DOTALL)
+if pattern.search(existing):
+    new_content = pattern.sub('', existing).strip()
+    cur.execute("UPDATE ItemTable SET value=? WHERE key='aicontext.personalContext'", (new_content,))
+    conn.commit()
+    print('  Cursor 전역 룰 제거 완료')
+conn.close()
+PYEOF
+fi
+
+# 4. 공용 도구 폴더
+[ -f "$TOOL_DIR/anr_parse.py" ]   && rm -f "$TOOL_DIR/anr_parse.py"   && echo "  파서 삭제 완료"
+[ -f "$TOOL_DIR/zz-anr-rule.md" ] && rm -f "$TOOL_DIR/zz-anr-rule.md"
+[ -f "$TOOL_DIR/uninstall.sh" ]   && rm -f "$TOOL_DIR/uninstall.sh"
+[ -d "$TOOL_DIR" ]                && rmdir "$TOOL_DIR" 2>/dev/null && echo "  도구 폴더 삭제 완료"
 
 echo ""
 echo "제거 완료."
-echo "(Cursor 프로젝트에 .cursor/rules/anr-analysis.mdc 를 복사했다면 그건 수동으로 지워주세요.)"
