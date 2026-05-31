@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 set "ARG1=%~1"
 if /I not "%ARG1%"=="skip" chcp 65001 > nul
 setlocal enabledelayedexpansion
@@ -237,9 +237,10 @@ echo 사용 방법 ^(공통 -- 모든 툴에서 동일^):
 echo   AI 어시스턴트 채팅에서 슬래시 커맨드로 호출:
 echo      /anr C:\path\to\dumpstate.txt
 echo      /anr "C:\My Logs\dump.txt"
+echo      ^(Cline 에서는 슬래시 메뉴에 /anr.md 로 표시됩니다^)
 echo.
 echo   - Claude Code: 새 세션부터 즉시 사용 가능
-echo   - Cline      : VSCode 재시작 후 사용
+echo   - Cline      : VSCode 재시작 후 사용 ^(/anr.md^)
 echo   - Cursor     : Cursor 재시작 후 사용
 echo.
 echo 설치된 위치:

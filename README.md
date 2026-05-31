@@ -41,6 +41,8 @@ curl -fsSL https://raw.githubusercontent.com/kingbeanstone/AOA/main/anr-install.
 
 > 탐색기에서 덤프 파일을 드래그드롭한 뒤 `/anr` 만 입력해도 됩니다.
 
+> **Cline 사용자** — Cline 슬래시 메뉴에는 `/anr` 이 아니라 파일명 그대로 **`/anr.md`** 로 표시됩니다. `/anr.md C:\path\to\dumpstate.txt` 처럼 호출하세요.
+
 ## 툴별 적용 방법
 
 설치 스크립트가 파서와 `/anr` 정의 파일을 세 툴 모두에 자동으로 배치합니다.
