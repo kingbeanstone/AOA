@@ -30,6 +30,24 @@ curl -fsSL https://raw.githubusercontent.com/kingbeanstone/AOA/main/anr-install.
 > **오프라인 환경** — GitHub 연결에 실패하면 스크립트와 같은 폴더의
 > `payload/` 폴더에서 자동으로 폴백합니다.
 
+## 사용법
+
+설치 후 AI 어시스턴트 채팅창에 **덤프 경로 + `anr`** 를 입력하세요.
+
+**방법 1 — 경로 + anr 키워드**
+```
+C:\path\to\dumpstate.txt anr 분석해줘
+/home/user/dumpstate.txt anr 분석해줘
+```
+
+**방법 2 — 탐색기에서 드래그드롭 후 입력**
+```
+anr 분석해줘
+```
+> VSCode/Cursor 탐색기에서 덤프 파일을 에디터 영역으로 드래그드롭합니다.
+> 그 뒤에 `anr 분석해줘` 를 입력하면 됩니다.
+> (덤프 용량이 크면 채팅창 드롭이 안 될 수 있습니다.)
+
 ## 툴별 적용 방법
 
 설치 스크립트는 파서를 `~/.anr-tool/` 에 두고, 룰을 각 툴이 읽는 위치에 배치합니다.
@@ -49,23 +67,7 @@ curl -fsSL https://raw.githubusercontent.com/kingbeanstone/AOA/main/anr-install.
   mkdir -p .cursor/rules && cp ~/.anr-tool/anr-analysis.mdc .cursor/rules/
   ```
 
-## 사용법
 
-설치 후 AI 어시스턴트 채팅창에 **덤프 경로 + `anr`** 를 입력하세요.
-
-**방법 1 — 경로 + anr 키워드**
-```
-C:\path\to\dumpstate.txt anr 분석해줘
-/home/user/dumpstate.txt anr 분석해줘
-```
-
-**방법 2 — 탐색기에서 드래그드롭 후 입력**
-```
-anr 분석해줘
-```
-> VSCode/Cursor 탐색기에서 덤프 파일을 채팅창으로 드래그드롭하면
-> 경로가 자동 삽입됩니다. 그 뒤에 `anr 분석해줘` 를 입력하면 됩니다.
-> (덤프 용량이 크면 채팅창 드롭이 안 될 수 있으니 경로를 직접 입력하세요.)
 
 ## 제거
 
