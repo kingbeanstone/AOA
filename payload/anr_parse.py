@@ -11,8 +11,8 @@ dumpstate 파일에서 ANR 관련 섹션을 추출해 두 개의 텍스트 파�
   [1] am_anr       — logcat am_anr 이벤트
   [2] ANR in       — ActivityManager ANR 헤더 + CPU 사용량 + PSI 메모리
   [3] VM traces    — VM TRACES AT LAST ANR 스레드 덤프
-  [4] 부근 logcat  — ANR 발생 시점 -120s ~ +10s 키워드 (GC / System / Render / IO)
-  [5] freeze 이전  — freeze 추정 시각 기준 패키지 로그
+  [4] 부근 logcat  — ANR-180s ~ ANR 시점 키워드 (GC/System/Render/IO)
+  [5] ANR-3분 로그 — ANR-180s ~ ANR 시점 ANR 패키지 관련 로그
 
 출력 파일 2: <원본>_anr_crashes.txt  (참고용 — ANR 분석에 사용하지 않음)
   [A] Crash 기록   — Java / native crash / TOMBSTONE (파일 전체 스캔)
@@ -29,11 +29,26 @@ dumpstate 파일에서 ANR 관련 섹션을 추출해 두 개의 텍스트 파�
   분석에는 앞부분만으로 충분하면서 토큰량이 폭증하는 것을 막는다.
 
 * 노이즈 태그 필터 (v1.5~):
-  [5] freeze 이전 로그에서 ANR 분석과 무관한 태그들을 제거한다.
+  [5] 로그에서 ANR 분석과 무관한 태그들을 제거한다.
   4 케이스(락 데드락 / ReentrantLock / 락 보유 지연 / GC 압박) 교차 검증으로
   안전성 확인됨. 그래픽 파이프라인(SurfaceFlinger 등), Insets 상태 변화,
   트랜지션 디테일, 패키지 가시성 정책, 삼성 OEM 모듈 등.
-  WindowManager 는 메시지 패턴으로 추가 필터링 (focus 변경, WIN DEATH 만 유지).
+  WindowManager / HWUI 는 메시지 패턴으로 추가 필터링
+  (WindowManager: focus 변경·WIN DEATH 만 유지 / HWUI: Davey! 만 유지).
+  SDHMS(삼성 PID 컨트롤러) 는 GPU·온도 스로틀링 시그널이 필요해서
+  필터에서 빼고 압축에만 맡긴다.
+
+* ANR-3분 로그 ([5], v1.9~):
+  ANR 시점 300초 전부터 ANR 시점까지 ANR 패키지명이 포함된 로그를 추출한다.
+  1차 분석의 안정적인 베이스라인 — 가설 없이 항상 동일한 기준으로 본다.
+
+* 키워드 2차 분석 (-k, v1.7~):
+  python anr_parse.py "<덤프>" -k <키워드> [-k <키워드2> ...]
+  1차 분석은 ANR 패키지 기준, 2차는 사용자가 의심하는 관련 프로세스/모듈 키워드 기준.
+  매칭 조건만 다르고 처리(윈도우 ANR-180s, 노이즈 필터, 압축, 라인 절단)는 1차와 동일.
+  결과는 <원본>_anr_keyword_<키워드>.txt 로 저장된다 (1차 결과 보존).
+  예) 1차에서 wallpaper 가 GPU 과점한 흔적이 보이면 → -k wallpaper 로 검증.
+      노이즈 필터에 걸리는 태그 자체를 보고 싶다면 → -k BLASTBufferQueue 등.
 
 외부 라이브러리 불필요 (표준 라이브러리만 사용).
 Python 3.8 이상 호환.
@@ -45,7 +60,94 @@ import sys
 from datetime import datetime as _dt
 from typing import Optional
 
-__version__ = "1.5"
+__version__ = "1.29"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 파일 라인 캐시: 한 dumpstate 를 디스크에서 한 번만 읽는다
+# ──────────────────────────────────────────────────────────────────────────────
+# 16개 추출 함수가 각자 open() 으로 파일을 처음부터 다시 읽으면 큰 덤프(수백MB)
+# 에서 I/O 가 함수 수만큼 곱절로 든다. break 제거로 끝까지 읽게 되면서 체감 큼.
+# 모듈 레벨 캐시로 (path, mtime) 키에 라인 리스트를 보관해 두 번째부터는 메모리
+# 접근만 한다. 라인은 원본 그대로(개행 포함) 보관해 기존 코드 동작과 호환.
+_LINE_CACHE = {}  # (abs_path, mtime) -> list[str]
+
+
+def _read_lines(path: str):
+    try:
+        st = os.stat(path)
+        key = (os.path.abspath(path), st.st_mtime)
+    except OSError:
+        key = (os.path.abspath(path), None)
+    cached = _LINE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    with open(path, encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
+    _LINE_CACHE[key] = lines
+    return lines
+
+
+# logcat 섹션 헤더/푸터 (dumpstate 표준 형식)
+#   시작: ------ SYSTEM LOG (logcat ...) ...
+#         ------ EVENT LOG (logcat ...) ...
+#   끝:   ------ 3.200s was the duration of 'SYSTEM LOG' ------
+_LOGCAT_SECTION_START = re.compile(
+    r"^------\s+(SYSTEM LOG|EVENT LOG)\b", re.IGNORECASE
+)
+_LOGCAT_SECTION_END = re.compile(
+    r"^------\s+[\d.]+s was the duration of '(SYSTEM LOG|EVENT LOG)'",
+    re.IGNORECASE,
+)
+# 또는 다른 섹션이 시작되면 logcat 섹션 종료 (안전망)
+_ANY_SECTION_START = re.compile(r"^------\s+\S")
+
+
+def _read_logcat_lines(path: str):
+    """dumpstate 에서 SYSTEM LOG / EVENT LOG 섹션만 잘라 반환.
+    ANR 분석에 필요한 logcat 은 거의 이 두 버퍼에 있고, 나머지 섹션(stat dumps,
+    package services, traces 등)은 logcat 처럼 보이는 줄이 일부 섞여 있어도
+    노이즈가 되거나 시간 윈도우 밖이라 비용만 든다. 이 헬퍼는 4·5·키워드
+    추출이 보는 범위를 두 버퍼로 좁혀 큰 덤프에서 체감 속도를 크게 줄인다.
+    캐시는 _read_lines 와 별도 키로 보관한다."""
+    try:
+        st = os.stat(path)
+        key = ("logcat_only", os.path.abspath(path), st.st_mtime)
+    except OSError:
+        key = ("logcat_only", os.path.abspath(path), None)
+    cached = _LINE_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    out = []
+    in_sec = False
+    sec_name = None
+    for line in _read_lines(path):
+        if in_sec:
+            # 명시적 종료 마커
+            if _LOGCAT_SECTION_END.match(line):
+                in_sec = False
+                sec_name = None
+                continue
+            # 종료 마커 누락 시 안전망: 다른 섹션 헤더가 나오면 종료
+            if _ANY_SECTION_START.match(line) and not _LOGCAT_SECTION_START.match(line):
+                in_sec = False
+                sec_name = None
+                # 새 헤더가 또 SYSTEM/EVENT LOG 인지 아래에서 다시 검사
+            else:
+                out.append(line)
+                continue
+        m = _LOGCAT_SECTION_START.match(line)
+        if m:
+            in_sec = True
+            sec_name = m.group(1).upper()
+            continue
+
+    # 섹션이 하나도 안 잡혔으면 — 헤더가 없는 변형 덤프 — 전체로 fallback
+    if not out:
+        out = _read_lines(path)
+    _LINE_CACHE[key] = out
+    return out
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -72,12 +174,11 @@ def _logcat_ts(line: str):
 def _last_anr_info(path: str):
     """마지막 am_anr 이벤트에서 (pid, process_name) 반환. 없으면 (None, None)."""
     pid, proc = None, None
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            if " am_anr" in line:
-                m = re.search(r"am_anr\s*:\s*\[\d+,(\d+),([^,]+),", line)
-                if m:
-                    pid, proc = m.group(1), m.group(2)
+    for line in _read_logcat_lines(path):
+        if " am_anr" in line:
+            m = re.search(r"am_anr\s*:\s*\[\d+,(\d+),([^,]+),", line)
+            if m:
+                pid, proc = m.group(1), m.group(2)
     return pid, proc
 
 
@@ -91,10 +192,9 @@ def extract_am_anr(path: str) -> str:
     if proc is None:
         return "(am_anr 이벤트 없음)"
     lines = []
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            if " am_anr" in line and proc in line:
-                lines.append(line.rstrip())
+    for line in _read_logcat_lines(path):
+        if " am_anr" in line and proc in line:
+            lines.append(line.rstrip())
     return "\n".join(lines) if lines else "(am_anr 이벤트 없음)"
 
 
@@ -110,11 +210,10 @@ def extract_anr_in(path: str) -> str:
         return m.group(1).rstrip() if m else None
 
     last_anr_lineno = -1
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for i, line in enumerate(f):
-            c = _am_content(line)
-            if c and "ANR in " in c:
-                last_anr_lineno = i
+    for i, line in enumerate(_read_logcat_lines(path)):
+        c = _am_content(line)
+        if c and "ANR in " in c:
+            last_anr_lineno = i
 
     if last_anr_lineno == -1:
         return "(ActivityManager ANR 섹션 없음)"
@@ -122,26 +221,25 @@ def extract_anr_in(path: str) -> str:
     out = []
     in_cpu_list = False
     cpu_count = 0
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for i, line in enumerate(f):
-            if i < last_anr_lineno:
-                continue
-            c = _am_content(line)
-            if c is None:
-                continue
-            if "TOTAL:" in c:
-                out.append(c)
-                break
-            if "CPU usage from" in c:
-                in_cpu_list = True
-                out.append(c)
-                continue
-            if in_cpu_list and c and c[0].isdigit():
-                cpu_count += 1
-                if cpu_count <= 4:
-                    out.append(c)
-                continue
+    for i, line in enumerate(_read_logcat_lines(path)):
+        if i < last_anr_lineno:
+            continue
+        c = _am_content(line)
+        if c is None:
+            continue
+        if "TOTAL:" in c:
             out.append(c)
+            break
+        if "CPU usage from" in c:
+            in_cpu_list = True
+            out.append(c)
+            continue
+        if in_cpu_list and c and c[0].isdigit():
+            cpu_count += 1
+            if cpu_count <= 4:
+                out.append(c)
+            continue
+        out.append(c)
 
     return "\n".join(out) if out else "(ActivityManager ANR 섹션 없음)"
 
@@ -162,26 +260,25 @@ def extract_vm_traces(path: str) -> str:
 
     in_section = False
     pending_pid = None
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            if not in_section:
-                if "VM TRACES AT LAST ANR" in line:
-                    in_section = True
-                continue
-            if line.startswith("------") and "VM TRACES" not in line:
-                break
-            m_start = re.match(r"----- pid (\d+) at ", line)
-            if m_start:
-                pending_pid = m_start.group(1)
-                continue
-            if pending_pid is not None:
-                cm = re.match(r"\s*Cmd line:\s*(\S+)", line)
-                if cm:
-                    cmd_name = cm.group(1)
-                    pid_to_cmd[pending_pid] = cmd_name
-                    if proc and (cmd_name == proc or cmd_name.startswith(proc + ":")):
-                        related_pids.add(pending_pid)
-                    pending_pid = None
+    for line in _read_lines(path):
+        if not in_section:
+            if "VM TRACES AT LAST ANR" in line:
+                in_section = True
+            continue
+        if line.startswith("------") and "VM TRACES" not in line:
+            break
+        m_start = re.match(r"----- pid (\d+) at ", line)
+        if m_start:
+            pending_pid = m_start.group(1)
+            continue
+        if pending_pid is not None:
+            cm = re.match(r"\s*Cmd line:\s*(\S+)", line)
+            if cm:
+                cmd_name = cm.group(1)
+                pid_to_cmd[pending_pid] = cmd_name
+                if proc and (cmd_name == proc or cmd_name.startswith(proc + ":")):
+                    related_pids.add(pending_pid)
+                pending_pid = None
 
     if not related_pids:
         return "(VM TRACES AT LAST ANR 섹션 없음)"
@@ -191,29 +288,28 @@ def extract_vm_traces(path: str) -> str:
     in_section = False
     current_pid = None
 
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            s = line.rstrip()
-            if not in_section:
-                if "VM TRACES AT LAST ANR" in line:
-                    in_section = True
-                    header_line = s
-                continue
-            if line.startswith("------") and "VM TRACES" not in line:
-                break
-            m_start = re.match(r"----- pid (\d+) at ", line)
-            if m_start:
-                this_pid = m_start.group(1)
-                current_pid = this_pid if this_pid in related_pids else None
-                continue
-            if re.match(r"----- end \d+", line):
+    for line in _read_lines(path):
+        s = line.rstrip()
+        if not in_section:
+            if "VM TRACES AT LAST ANR" in line:
+                in_section = True
+                header_line = s
+            continue
+        if line.startswith("------") and "VM TRACES" not in line:
+            break
+        m_start = re.match(r"----- pid (\d+) at ", line)
+        if m_start:
+            this_pid = m_start.group(1)
+            current_pid = this_pid if this_pid in related_pids else None
+            continue
+        if re.match(r"----- end \d+", line):
+            current_pid = None
+            continue
+        if current_pid is not None:
+            if s.startswith("Zygote loaded classes"):
                 current_pid = None
                 continue
-            if current_pid is not None:
-                if s.startswith("Zygote loaded classes"):
-                    current_pid = None
-                    continue
-                blocks_by_pid.setdefault(current_pid, []).append(s)
+            blocks_by_pid.setdefault(current_pid, []).append(s)
 
     # CPU 과부하 시 덤프 실패 패턴 두 가지를 모두 감지:
     #   1. libdebuggerd_client: failed  →  tombstoned 타임아웃
@@ -435,6 +531,185 @@ def _logcat_tag(line: str):
     return m.group(1) if m else None
 
 
+# 그래픽 파이프라인 태그군: 프레임/합성/DVFS 단위로 폭증하며 서로 번갈아 나타난다.
+# 개별 줄은 가치가 낮고 "GPU 파이프라인이 폭주했다"는 부하 규모만 중요하므로
+# 부하 요약으로 통합 집계한다.
+#
+# SDHMS / HWUI 도 태그군에 포함하되, GPU hang 을 직접 지목하는 '단서 라인'
+# (avgGpuLoad, Davey!) 만은 집계에서 빼고 그대로 보존한다 (_GFX_CLUE_RE).
+# 단서 외의 SDHMS PID 잡로그, 일반 HWUI 줄은 폭증 노이즈라 집계로 접는다.
+_GRAPHICS_PIPELINE_TAGS = frozenset({
+    "SurfaceFlinger", "SurfaceComposerClient", "SurfaceControlRegistry",
+    "BLASTBufferQueue", "BLASTBufferQueue_Java",
+    "BufferQueue", "BufferQueueProducer", "BufferQueueConsumer", "BufferQueueSource",
+    "Layer", "RenderEngine", "GLConsumer", "Gralloc", "GraphicBuffer",
+    "VSyncReactor", "VsyncConfiguration", "scheduler",
+    "RefreshRateModeManager", "RefreshRateConfigs", "RefreshRateOverlay",
+    "DisplayAiqeHalImpl", "NativeSemDvfsManager",
+    "SDHMS", "HWUI",
+})
+_GRAPHICS_GROUP_LABEL = "그래픽 파이프라인"
+
+# GPU hang 단서 — 그래픽 태그라도 이 패턴이 든 줄은 집계하지 않고 보존한다.
+# avgGpuLoad/Davey 외에 SDHMS 의 GPU 주파수·제한 신호(GPUFreqMax, GpuLimit 등),
+# 써멀 스로틀링/DVFS 의 GPU 클럭 상한 신호(SIOP_GPU, GPUMaxFreq, GPU_FREQ_MAX 등),
+# GPU sync 상태(present fence, setStopped) 도 GPU hang 직접 단서라 보존한다.
+_GFX_CLUE_RE = re.compile(
+    r"avgGpuLoad|Davey|GPUFreqMax|GpuLimit|GpuLoad|isNeedtoGpuLimit"
+    r"|SIOP_GPU|GPUMaxFreq|GPU_FREQ_MAX|GPU_MAX_FREQ"
+    r"|present fence|Invalid fence|fence signal|setStopped",
+    re.IGNORECASE,
+)
+
+
+def _is_graphics_pipeline_line(line: str) -> bool:
+    tag = _logcat_tag(line)
+    if tag is None or tag not in _GRAPHICS_PIPELINE_TAGS:
+        return False
+    # 단서 라인은 집계 대상에서 제외 (보존)
+    if _GFX_CLUE_RE.search(line):
+        return False
+    return True
+
+
+_FRAMENUM_RE = re.compile(r"frameNumber[:=]\s*(\d+)", re.IGNORECASE)
+
+
+def _aggregate_graphics_pipeline(lines, top_n: int = 3):
+    """그래픽 파이프라인 태그 줄을 부하량 요약으로 통합 집계 (옵션 1).
+
+    이벤트 흐름이 아니라 '얼마나 부하가 있었는지'만 LLM 에 전달한다.
+    - 태그별 건수 집계.
+    - 건수 상위 top_n 태그: 마지막 핵심 줄 1개 + frameNumber 추이(있으면) 표시.
+    - 나머지 태그: 건수만 한 줄로.
+    프레임 줄은 모두 제거하고 요약 블록을 최초 등장 위치에 삽입한다.
+    HWUI(Davey!)/SDHMS 는 태그군에 없어 집계에 걸리지 않고 보존된다."""
+    gfx_idx = [i for i, l in enumerate(lines) if _is_graphics_pipeline_line(l)]
+    if len(gfx_idx) < 3:
+        return lines  # 폭증이 아니면 그대로 둔다.
+
+    def _ts_str(line):
+        m = re.match(r"(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)", line)
+        return m.group(1) if m else "??"
+
+    # 태그별 집계: 건수, 마지막 줄, frameNumber 최소/최대, 시각 범위
+    stats = {}  # tag -> {count, last, fmin, fmax, tmin, tmax, tmin_s, tmax_s}
+    for i in gfx_idx:
+        l = lines[i]
+        tag = _logcat_tag(l)
+        s = stats.setdefault(tag, {
+            "count": 0, "last": l, "fmin": None, "fmax": None,
+            "tmin": None, "tmax": None, "tmin_s": None, "tmax_s": None,
+        })
+        s["count"] += 1
+        s["last"] = l
+        mf = _FRAMENUM_RE.search(l)
+        if mf:
+            fn = int(mf.group(1))
+            s["fmin"] = fn if s["fmin"] is None else min(s["fmin"], fn)
+            s["fmax"] = fn if s["fmax"] is None else max(s["fmax"], fn)
+        ts = _logcat_ts(l)
+        if ts is not None:
+            tstr = _ts_str(l)
+            if s["tmin"] is None or ts < s["tmin"]:
+                s["tmin"], s["tmin_s"] = ts, tstr
+            if s["tmax"] is None or ts > s["tmax"]:
+                s["tmax"], s["tmax_s"] = ts, tstr
+
+    total = len(gfx_idx)
+    first_ts = _ts_str(lines[gfx_idx[0]])
+    last_ts = _ts_str(lines[gfx_idx[-1]])
+    ranked = sorted(stats.items(), key=lambda kv: kv[1]["count"], reverse=True)
+
+    block = [
+        f"  … [{_GRAPHICS_GROUP_LABEL}] 총 {total}건 "
+        f"({first_ts} ~ {last_ts}) — 부하 요약 (흐름 아님)"
+    ]
+    for tag, s in ranked:
+        # frameNumber 추이
+        trend = ""
+        if s["fmin"] is not None and s["fmax"] is not None:
+            trend = f"  frameNumber {s['fmin']}→{s['fmax']} (+{s['fmax'] - s['fmin']})"
+        # 지속 시간 + 초당 빈도
+        span = ""
+        if s["tmin"] is not None and s["tmax"] is not None:
+            dur = s["tmax"] - s["tmin"]
+            rate = (s["count"] / dur) if dur > 0 else 0.0
+            span = (f"  {s['tmin_s'][6:]}~{s['tmax_s'][6:]} "
+                    f"({dur:.0f}초간 {s['count']}건, ~{rate:.0f}/s)")
+        block.append(f"    {tag} ×{s['count']}{trend}{span}")
+        block.append(f"      (마지막) {s['last']}")
+
+    out = []
+    inserted = False
+    for i, l in enumerate(lines):
+        if _is_graphics_pipeline_line(l):
+            if not inserted:
+                out.extend(block)
+                inserted = True
+            continue
+        out.append(l)
+    return out
+
+
+def _summarize_by_tag(lines, top_n: int = 5, min_total: int = 6):
+    """카테고리(4섹션 GC/System/IO 등)를 태그별 부하 요약으로 축약.
+    이벤트 흐름이 아니라 '어느 태그가 얼마나 찍혔는지'만 본다.
+    - 태그별 건수 집계, 태그별 마지막 줄 1개만 남김.
+    - 모든 태그에 대해 마지막 줄 1개를 남김 (시간 기준점 보존).
+    - 건수 많은 순으로 정렬.
+    - GPU hang 단서 줄(avgGpuLoad/Davey!)은 집계하지 않고 그대로 보존한다.
+    - 이미 만들어진 그래픽 요약 블록(들여쓰기 줄)이나 태그 없는 줄도 그대로 통과.
+    줄 수가 min_total 미만이면 압축 이득이 없으므로 원본 유지."""
+    taggable = [l for l in lines if _logcat_tag(l) is not None]
+    if len(taggable) < min_total:
+        return lines
+
+    # 통과 줄: 태그 없는 줄(요약 블록 등)은 그대로,
+    # GPU 단서 줄(avgGpuLoad/Davey!/GPUFreqMax/SIOP_GPU 등)은
+    # (태그, 단서 종류) 단위로 마지막 1줄만 보존한다.
+    # (단서 종류는 _GFX_CLUE_RE 가 매칭한 토큰을 소문자로 정규화.
+    #  태그 단위로만 dedupe 하면 SDHMS 안의 GPUFreqMax 줄이 SDHMS 의 다른
+    #  단서 줄에 덮어써져 사라지는 문제가 있다.)
+    plain_passthrough = [l for l in lines if _logcat_tag(l) is None]
+    clue_last = {}   # (tag, kind) -> 마지막 줄
+    clue_count = {}  # (tag, kind) -> 건수
+    for l in lines:
+        if _logcat_tag(l) is None:
+            continue
+        m = _GFX_CLUE_RE.search(l)
+        if not m:
+            continue
+        tag = _logcat_tag(l)
+        kind = m.group(0).lower()
+        key = (tag, kind)
+        clue_last[key] = l
+        clue_count[key] = clue_count.get(key, 0) + 1
+
+    stats = {}  # tag -> {"count", "last"}
+    for l in lines:
+        tag = _logcat_tag(l)
+        if tag is None or _GFX_CLUE_RE.search(l):
+            continue  # 단서 줄은 집계에서 제외 (보존)
+        if tag not in stats:
+            stats[tag] = {"count": 0, "last": l}
+        stats[tag]["count"] += 1
+        stats[tag]["last"] = l
+
+    ranked = sorted(stats.items(), key=lambda kv: kv[1]["count"], reverse=True)
+    out = list(plain_passthrough)  # 요약 블록 등 통과
+    # GPU 단서 먼저(눈에 띄게): (태그, 단서 종류) 단위로 마지막 줄 + 건수
+    for (tag, kind), last in clue_last.items():
+        cnt = clue_count[(tag, kind)]
+        suffix = f"  ({kind} ×{cnt})" if cnt > 1 else f"  ({kind})"
+        out.append(f"    [GPU 단서]{suffix}")
+        out.append(f"      {last}")
+    for tag, s in ranked:
+        out.append(f"    {tag} ×{s['count']}")
+        out.append(f"      (마지막) {s['last']}")
+    return out
+
+
 def _tag_group(tag: str) -> str:
     if "." in tag:
         return tag.split(".", 1)[0] + ".*"
@@ -508,8 +783,9 @@ def _truncate_long_lines(lines, max_len: int = _MAX_LINE_LEN_DEFAULT):
 # 새 OEM 노이즈 태그가 발견되면 여기에 추가한다.
 _DROP_TAGS_PRE_FREEZE = {
     # 그래픽 / Surface 파이프라인 (4 케이스 평균 23% 점유)
+    # HWUI 는 Davey! 만 살려야 해서 별도 메시지 패턴으로 처리 (아래 _HWUI_KEEP_PATTERN)
     "SurfaceFlinger", "SurfaceComposerClient", "SurfaceControlRegistry",
-    "Layer", "RenderEngine", "BufferQueue", "HWUI",
+    "Layer", "RenderEngine", "BufferQueue",
 
     # Insets 상태 변화 (평균 8.5%)
     "InsetsSourceProvider", "InsetsController", "InsetsSourceConsumer",
@@ -529,16 +805,29 @@ _DROP_TAGS_PRE_FREEZE = {
     "nativeloader", "GraphicsEnvironment",
 
     # 삼성 OEM 모듈 (다른 OEM 단말에선 다른 태그가 나올 수 있음)
+    # SDHMS 는 PID/온도/GPU 스로틀링 시그널이 필요해서 의도적으로 제외
+    # (wallpaper GPU 과점 → 카메라 ANR 같은 케이스에서 avgGpuLoad/Target Temp 등 단서)
     "SGM",  # 게임매니저
     "SAMSUNGWALLET",
     "HBD",
     "MdnieScenarioControlService",  # 디스플레이 색감
-    "SDHMS",
     "SecSTQuickControlRequestReceiver",
     "PersonaActivityHelper",
     "EMMAgent",
     "Navbar.Store", "NavigationBar",
     "NowBarExternalViewCardView",  # Now Bar 카드 뷰
+
+    # 진동 및 알림 관련 (단순 UI/UX 피드백)
+    "VibratorManagerService", "VibrationThread",
+    "NotificationManager", "NotificationReminder", "NotifHistoryProto",
+    "EdgeLightingManager", "EdgeLightingPolicyManager",
+
+    # 시스템 설정 및 권한 확인 (단순 조회)
+    "PackageConfigPersister", "AppOps", "Settings",
+
+    # 백그라운드 최적화 및 기타 잡로그
+    "FreecessHandler", "Pageboost",
+    "[secipm]", "secipm",  # 표시 형식 양쪽 모두 대응
 }
 
 # WindowManager 는 평균 24% 로 가장 비대하지만 중요한 사건도 포함
@@ -549,6 +838,10 @@ _WM_KEEP_PATTERN = re.compile(
     r"Force removing|app died|"
     r"finishDrawingWindow|removeWindowToken|onRemovedFromDisplay"
 )
+
+# HWUI 는 보통 노이즈지만 Davey! (프레임 1500ms+ 지연 시그널) 은 매우 중요.
+# UI 스레드가 오래 멈췄다는 직접 증거라서 ANR 분석의 핵심 단서가 된다.
+_HWUI_KEEP_PATTERN = re.compile(r"Davey")
 
 # HoneySpace.* 형식의 삼성 런처 관련 태그를 한 번에 걸러내기 위한 prefix 매칭
 _DROP_TAG_PREFIXES = (
@@ -566,6 +859,10 @@ def _should_drop_pre_freeze(tag: str, message: str) -> bool:
     # WindowManager 는 메시지 패턴으로 추가 필터
     if tag == "WindowManager":
         if not _WM_KEEP_PATTERN.search(message):
+            return True
+    # HWUI 는 Davey! 같은 jank 시그널만 유지하고 나머지는 버린다
+    if tag == "HWUI":
+        if not _HWUI_KEEP_PATTERN.search(message):
             return True
     return False
 
@@ -600,60 +897,89 @@ _GC_KW = [
 ]
 _SYSTEM_KW = [
     "lowmemorykiller", "lmkd", "Kill '", "freeze ", "unfreeze ",
-    "Freezer", "cpu starvation", "sched", "task stalled", "hung task",
+    "Freezer", "cpu starvation", "task stalled", "hung task",
+    "sched_blocked", "sched delay", "schedule delay", "scheduling latency",
+    "Slow main thread", "Slow Looper", "Slow dispatch", "Slow delivery",
+    "watchdog", "WATCHDOG",
+    "dvm_lock_sample",  # 락 경합 직접 시그널 (dalvik: 임계 이상 락 대기 시 기록)
 ]
 _RENDER_KW = [
     "SurfaceFlinger", "BufferQueue", "dequeueBuffer", "queueBuffer",
     "EGL", "OpenGLRenderer", "HWUI", "FrameMissed", "jank", "RenderThread",
+    "Davey!", "avgGpuLoad", "BLASTBufferQueue",
+    "Skipped frames",   # main thread 블로킹 부산물 (Choreographer)
+    "setStopped",       # HardwareRenderer 블로킹 지점
+    "present fence",    # GPU sync 상태
 ]
 _IO_KW = [
     "I/O error", "Slow operation", "fsync", "storage", "SQLite",
     "database is locked", "disk full", "read blocked", "write blocked",
 ]
 
+# 카테고리별 키워드를 미리 하나의 정규식으로 컴파일.
+# 127만 줄 × for kw in kws 루프 → 127만 줄 × re.search(C레벨) 1회로 교체.
+# 결과(어떤 줄이 매칭되는지)는 완전히 동일하고 속도만 개선된다.
+def _kw_re(kws):
+    return re.compile("|".join(re.escape(k) for k in kws))
 
-def extract_logcat_window(path: str, window_before: int = 120, window_after: int = 10) -> str:
-    """ANR 시점 ±window 범위 logcat에서 GC/System/Render/IO 키워드 수집.
-    각 카테고리 내 연속 동일 태그는 압축."""
+_GC_RE     = _kw_re(_GC_KW)
+_SYSTEM_RE = _kw_re(_SYSTEM_KW)
+_RENDER_RE = _kw_re(_RENDER_KW)
+_IO_RE     = _kw_re(_IO_KW)
+
+
+def extract_logcat_window(path: str, window_before: int = 180) -> str:
+    """ANR 시점 기준 logcat 에서 GC/System/Render/IO 키워드 수집.
+    카테고리별 부하 요약. ANR 이전 구간만 본다 (ANR 이후는 노이즈라 제외)."""
     anr_ts = None
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            if " am_anr" in line:
-                ts = _logcat_ts(line)
-                if ts is not None:
-                    anr_ts = ts
+    for line in _read_logcat_lines(path):
+        if " am_anr" in line:
+            ts = _logcat_ts(line)
+            if ts is not None:
+                anr_ts = ts
 
     t_start = (anr_ts - window_before) if anr_ts else None
-    t_end   = (anr_ts + window_after)  if anr_ts else None
+    t_end   = anr_ts  # ANR 시점까지만
 
     found = {"GC": [], "System": [], "Render": [], "IO": []}
-    kw_map = {"GC": _GC_KW, "System": _SYSTEM_KW, "Render": _RENDER_KW, "IO": _IO_KW}
-    MAX = 15
+    cat_res = {"GC": _GC_RE, "System": _SYSTEM_RE, "Render": _RENDER_RE, "IO": _IO_RE}
+    MAX = 20000
     in_window = (anr_ts is None)
 
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            if all(len(v) >= MAX for v in found.values()):
-                break
-            if anr_ts is not None:
-                ts = _logcat_ts(line)
-                if ts is not None:
-                    in_window = (t_start <= ts <= t_end)
-                    if ts > t_end + 60:
-                        break
-            if not in_window:
+    # 주의: dumpstate 는 EVENT/SYSTEM/MAIN 등 여러 logcat 버퍼를 이어 붙여서,
+    # 파일을 순차로 읽으면 버퍼 경계에서 시간이 되감겼다 다시 흐른다.
+    # 따라서 "시각이 윈도우를 지났다"고 break 하면 뒤 버퍼(예: SYSTEM LOG)의
+    # 로그를 통째로 놓친다. 시간 기반 break 를 쓰지 않고 전체를 훑되,
+    # 윈도우 필터로만 거른다. 폭주 방지는 카테고리별 MAX 로 한다.
+    for line in _read_logcat_lines(path):
+        if all(len(v) >= MAX for v in found.values()):
+            break
+        # 타임스탬프가 아예 없는 줄(헤더, 멀티라인 등)은 빠르게 skip.
+        if anr_ts is not None and not line[:2].isdigit():
+            continue
+        ts = None
+        if anr_ts is not None:
+            ts = _logcat_ts(line)
+            if ts is not None:
+                in_window = (t_start <= ts <= t_end)
+        if not in_window:
+            continue
+        # 윈도우 안에서만 비싼 정규식 검사 수행.
+        is_clue = bool(_GFX_CLUE_RE.search(line))
+        for cat, cat_re in cat_res.items():
+            # MAX 가드. GPU 단서는 그래픽 폭증으로 Render 가 MAX 에 도달해도 통과.
+            if len(found[cat]) >= MAX and not (is_clue and cat == "Render"):
                 continue
-            for cat, kws in kw_map.items():
-                if len(found[cat]) >= MAX:
-                    continue
-                for kw in kws:
-                    if kw in line:
-                        found[cat].append(line.rstrip())
-                        break
+            # GPU 단서 줄은 Render 키워드에 안 걸려도(예: [GPUFreqMax]) Render 로 수집.
+            if is_clue and cat == "Render":
+                found[cat].append(line.rstrip())
+                continue
+            if cat_re.search(line):
+                found[cat].append(line.rstrip())
 
     parts = []
     if anr_ts is not None:
-        parts.append(f"(ANR 기준 -{window_before}s ~ +{window_after}s 범위 스캔)")
+        parts.append(f"(스캔: ANR-{window_before}s ~ ANR 시점)")
     else:
         parts.append("(am_anr 이벤트 미발견 — 파일 전체 스캔)")
 
@@ -662,7 +988,12 @@ def extract_logcat_window(path: str, window_before: int = 120, window_after: int
         if lines:
             has_any = True
             parts.append(f"\n[{cat}]")
-            parts.extend(_truncate_long_lines(_collapse_consecutive_same_tag(lines)))
+            if cat == "Render":
+                # 그래픽 폭증을 frameNumber 추이 + 단서 보존으로 먼저 접고,
+                lines = _aggregate_graphics_pipeline(lines)
+            # 모든 카테고리를 태그별 부하 요약으로 축약 (흐름 아님, 부하량만).
+            lines = _summarize_by_tag(lines)
+            parts.extend(_truncate_long_lines(lines))
 
     if not has_any:
         parts.append("(해당 키워드 없음)")
@@ -671,11 +1002,14 @@ def extract_logcat_window(path: str, window_before: int = 120, window_after: int
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# [5] freeze 추정 시각 기준 사전 패키지 로그
+# [5] ANR-3분 ~ ANR 시점 ANR 패키지 로그
 # ──────────────────────────────────────────────────────────────────────────────
 
-def extract_pre_freeze_log(path: str, lookback: int = 30) -> str:
-    """freeze 추정 시각 기준 lookback초 전부터 freeze 시점까지 패키지 로그 추출."""
+def extract_pre_freeze_log(path: str, lookback: int = 180) -> str:
+    """ANR 시점 기준 lookback초 전부터 ANR 시점까지 ANR 패키지 로그 추출.
+    1차 분석의 안정적인 베이스라인 — 가설 없이 항상 동일 기준으로 본다.
+    가설 검증(wallpaper 의심 등)은 -k 키워드 2차 분석을 사용한다.
+    출력은 섹션 4 와 같은 태그별 부하 요약 (시간 흐름은 뭉개지지만 토큰 절약)."""
     pid, proc = _last_anr_info(path)
     if proc is None:
         return "(ANR 프로세스 정보 없음)"
@@ -683,54 +1017,111 @@ def extract_pre_freeze_log(path: str, lookback: int = 30) -> str:
     anr_ts = None
     anr_time_str = ""
     delay_ms = 0
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            if " am_anr" not in line or proc not in line:
-                continue
-            ts = _logcat_ts(line)
-            if ts is not None:
-                anr_ts = ts
-                m_ts = re.match(r"(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)", line)
-                if m_ts:
-                    anr_time_str = m_ts.group(1)
-            m_d = re.search(r"Waited (\d+)ms", line)
-            if m_d:
-                delay_ms = int(m_d.group(1))
+    for line in _read_logcat_lines(path):
+        if " am_anr" not in line or proc not in line:
+            continue
+        ts = _logcat_ts(line)
+        if ts is not None:
+            anr_ts = ts
+            m_ts = re.match(r"(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)", line)
+            if m_ts:
+                anr_time_str = m_ts.group(1)
+        m_d = re.search(r"Waited (\d+)ms", line)
+        if m_d:
+            delay_ms = int(m_d.group(1))
 
     if anr_ts is None:
         return "(ANR 타임스탬프 추출 실패)"
 
-    delay_s   = delay_ms / 1000.0
-    freeze_ts = anr_ts - delay_s
-    t_start   = freeze_ts - lookback
-    t_end     = freeze_ts
+    t_start = anr_ts - lookback
+    t_end   = anr_ts
 
     out_lines = []
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            ts = _logcat_ts(line)
-            if ts is None:
-                continue
-            if ts > t_end + 5:
-                break
-            if t_start <= ts <= t_end and proc in line:
-                out_lines.append(line.rstrip())
+    for line in _read_logcat_lines(path):
+        ts = _logcat_ts(line)
+        if ts is None:
+            continue
+        # dumpstate 다중 버퍼(시간 되감김) 때문에 시간 기반 break 금지.
+        if t_start <= ts <= t_end and proc in line:
+            out_lines.append(line.rstrip())
 
     raw_count = len(out_lines)
     out_lines, dropped = _filter_pre_freeze_tags(out_lines)
-    out_lines = _collapse_consecutive_same_tag(out_lines)
+    out_lines = _aggregate_graphics_pipeline(out_lines)
+    # 섹션 4 와 같은 태그별 부하 요약. 시간 흐름은 뭉개지지만 토큰을 크게 줄인다.
+    out_lines = _summarize_by_tag(out_lines)
     out_lines = _truncate_long_lines(out_lines)
 
+    delay_note = f"  /  ANR 지연: {delay_ms}ms" if delay_ms else ""
     header = (
-        f"(ANR 시각: {anr_time_str}  /  지연: {delay_ms}ms  /  "
-        f"freeze 추정: ANR-{delay_s:.1f}s  /  "
-        f"스캔 범위: freeze-{lookback}s ~ freeze 시점  /  "
+        f"(ANR 시각: {anr_time_str}{delay_note}  /  "
+        f"스캔 범위: ANR-{lookback}s ~ ANR 시점  /  "
         f"매칭: 패키지명 '{proc}' 포함  /  "
-        f"노이즈 태그 {dropped}건 필터링됨)"
+        f"원본 {raw_count}건 → 노이즈 태그 {dropped}건 필터링됨)"
     )
     if not out_lines:
         return f"{header}\n({proc} 관련 로그 없음)"
     return header + "\n" + "\n".join(out_lines)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 키워드 2차 분석 — 덤프 전체에서 특정 키워드 포함 라인 추출
+# ──────────────────────────────────────────────────────────────────────────────
+
+def extract_keyword_lines(path, keywords, lookback: int = 180):
+    """[5] 1차 분석과 동일한 처리를 키워드 매칭으로 수행 (2차 분석).
+    의도: 1차는 ANR 패키지 기준, 2차는 사용자가 의심하는 관련 프로세스/모듈 기준.
+    매칭 외엔 동일 — ANR-{lookback}s ~ ANR 윈도우, 노이즈 태그 필터, 동일 태그 압축, 라인 절단.
+    키워드는 대소문자 무시."""
+    anr_ts = None
+    anr_time_str = ""
+    delay_ms = 0
+    for line in _read_logcat_lines(path):
+        if " am_anr" not in line:
+            continue
+        ts = _logcat_ts(line)
+        if ts is not None:
+            anr_ts = ts
+            m_ts = re.match(r"(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+)", line)
+            if m_ts:
+                anr_time_str = m_ts.group(1)
+        m_d = re.search(r"Waited (\d+)ms", line)
+        if m_d:
+            delay_ms = int(m_d.group(1))
+
+    if anr_ts is None:
+        return "(ANR 타임스탬프 추출 실패 — am_anr 이벤트 없음)"
+
+    t_start = anr_ts - lookback
+    t_end   = anr_ts
+    kws_lower = [k.lower() for k in keywords]
+
+    matched = []
+    for line in _read_logcat_lines(path):
+        ts = _logcat_ts(line)
+        if ts is None:
+            continue
+        # dumpstate 다중 버퍼(시간 되감김) 때문에 시간 기반 break 금지.
+        if t_start <= ts <= t_end:
+            low = line.lower()
+            if any(k in low for k in kws_lower):
+                matched.append(line.rstrip())
+
+    raw_count = len(matched)
+    matched, dropped = _filter_pre_freeze_tags(matched)
+    matched = _collapse_consecutive_same_tag(matched)
+    matched = _truncate_long_lines(matched)
+
+    delay_note = f"  /  ANR 지연: {delay_ms}ms" if delay_ms else ""
+    header = (
+        f"(ANR 시각: {anr_time_str}{delay_note}  /  "
+        f"스캔 범위: ANR-{lookback}s ~ ANR 시점  /  "
+        f"키워드: {', '.join(keywords)} (대소문자 무시)  /  "
+        f"원본 {raw_count}건 → 노이즈 태그 {dropped}건 필터링됨)"
+    )
+    if not matched:
+        return f"{header}\n(매칭 라인 없음)"
+    return header + "\n" + "\n".join(matched)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -753,8 +1144,7 @@ def _rel_to_anr(ts, anr_ts):
 
 def _extract_java_crashes(path, anr_ts):
     out = []
-    with open(path, encoding="utf-8", errors="replace") as f:
-        lines = f.readlines()
+    lines = _read_lines(path)
     i, n = 0, len(lines)
     while i < n:
         line = lines[i]
@@ -797,8 +1187,7 @@ def _extract_java_crashes(path, anr_ts):
 
 def _extract_native_crashes(path, anr_ts):
     out = []
-    with open(path, encoding="utf-8", errors="replace") as f:
-        lines = f.readlines()
+    lines = _read_lines(path)
     i, n = 0, len(lines)
     while i < n:
         line = lines[i]
@@ -842,8 +1231,7 @@ def _extract_native_crashes(path, anr_ts):
 
 def _extract_tombstones(path):
     out = []
-    with open(path, encoding="utf-8", errors="replace") as f:
-        lines = f.readlines()
+    lines = _read_lines(path)
     i, n = 0, len(lines)
     while i < n:
         if "TOMBSTONE" not in lines[i] or not lines[i].lstrip().startswith("---"):
@@ -884,12 +1272,11 @@ def _extract_tombstones(path):
 def extract_crash_records(path: str) -> str:
     """파일 전체에서 Java/native crash + TOMBSTONE 을 모두 수집."""
     anr_ts = None
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            if " am_anr" in line:
-                t = _logcat_ts(line)
-                if t is not None:
-                    anr_ts = t
+    for line in _read_logcat_lines(path):
+        if " am_anr" in line:
+            t = _logcat_ts(line)
+            if t is not None:
+                anr_ts = t
     _, anr_proc = _last_anr_info(path)
 
     crashes = []
@@ -960,8 +1347,8 @@ SECTIONS_MAIN = [
     ("[1] am_anr 이벤트",                          extract_am_anr),
     ("[2] ANR in  (ActivityManager 섹션)",          extract_anr_in),
     ("[3] VM TRACES AT LAST ANR  (스레드 덤프)",   extract_vm_traces),
-    ("[4] ANR 부근 logcat 키워드  (-120s ~ +10s)",  extract_logcat_window),
-    ("[5] freeze 이전 패키지 로그  (freeze-30s ~ freeze)", extract_pre_freeze_log),
+    ("[4] ANR 부근 logcat 키워드  (ANR-180s ~ ANR 시점)",  extract_logcat_window),
+    ("[5] ANR-3분 로그  (패키지명 기준, ANR-180s ~ ANR)", extract_pre_freeze_log),
 ]
 
 # 참고용 — _anr_crashes.txt 에 별도 저장됨 (ANR 분석에 사용하지 않음)
@@ -1023,12 +1410,66 @@ def parse_and_save(dumpstate_path: str) -> Optional[str]:
 
     print(f"\n  → 분석용 저장: {main_path}")
     print(f"  → 부록 저장  : {aux_path}")
+    # 이 덤프 처리가 끝나면 라인 캐시를 비워 메모리를 회수한다 (interactive 모드 대비).
+    _LINE_CACHE.clear()
     return main_path
+
+
+def keyword_search_and_save(dumpstate_path, keywords):
+    """키워드 2차 분석 결과를 <원본>_anr_keyword_<키워드>.txt 로 저장."""
+    dumpstate_path = dumpstate_path.strip().strip('"').strip("'")
+    if not os.path.isfile(dumpstate_path):
+        print(f"  ⚠ 파일을 찾을 수 없습니다: {dumpstate_path}")
+        return None
+
+    print(f"\n키워드 파싱 중: {os.path.basename(dumpstate_path)}"
+          f"  (키워드: {', '.join(keywords)})")
+
+    base = os.path.splitext(dumpstate_path)[0]
+    slug = "_".join(re.sub(r"[^\w.-]", "", k) for k in keywords) or "kw"
+    out_path = f"{base}_anr_keyword_{slug}.txt"
+
+    body = extract_keyword_lines(dumpstate_path, keywords)
+    output_lines = [
+        "ANR 키워드 추가 분석",
+        f"파서 버전 : {__version__}",
+        f"원본 : {os.path.basename(dumpstate_path)}",
+        f"키워드 : {', '.join(keywords)}",
+        f"일시 : {_dt.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        SEP,
+        "",
+        body,
+    ]
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(output_lines))
+
+    print("  ✓ 키워드 추출 완료")
+    print(f"\n  → 키워드 결과 저장: {out_path}")
+    return out_path
+
+
+def _parse_args(args):
+    """sys.argv 파싱. (path, keywords) 반환.
+    경로에 공백이 있어도 따옴표 없이 받을 수 있도록 플래그 외 토큰은 합친다."""
+    keywords = []
+    path_parts = []
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("-k", "--keyword") and i + 1 < len(args):
+            keywords.append(args[i + 1]); i += 2
+        else:
+            path_parts.append(a); i += 1
+    return " ".join(path_parts), keywords
 
 
 def main():
     if len(sys.argv) > 1:
-        parse_and_save(" ".join(sys.argv[1:]))
+        path, keywords = _parse_args(sys.argv[1:])
+        if keywords:
+            keyword_search_and_save(path, keywords)
+        else:
+            parse_and_save(path)
         return
 
     print("=" * 50)
