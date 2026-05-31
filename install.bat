@@ -8,7 +8,7 @@ REM   ANR 분석 도구 설치 스크립트 (Windows)
 REM   Cline / Cursor / Claude Code 공용 — 슬래시 커맨드 / 스킬 방식.
 REM   - 파서(anr_parse.py)    → %USERPROFILE%\.anr-tool\
 REM   - Claude Code 슬래시    → %USERPROFILE%\.claude\commands\anr.md
-REM   - Cline 스킬            → %USERPROFILE%\.cline\skills\anr\SKILL.md
+REM   - Cline 워크플로우      → %USERPROFILE%\Documents\Cline\Workflows\anr.md
 REM   - Cursor 스킬           → %USERPROFILE%\.cursor\skills\anr\SKILL.md
 REM ============================================================
 
@@ -28,13 +28,13 @@ set "TMP_ZIP=%TEMP%\anr-tool-latest.zip"
 set "TMP_DIR=%TEMP%\anr-tool-latest"
 set "TOOL_DIR=%USERPROFILE%\.anr-tool"
 set "CLAUDE_CMDS=%USERPROFILE%\.claude\commands"
-set "CLINE_SKILL_DIR=%USERPROFILE%\.cline\skills\anr"
+set "CLINE_WORKFLOW_DIR=%USERPROFILE%\Documents\Cline\Workflows"
 set "CURSOR_SKILL_DIR=%USERPROFILE%\.cursor\skills\anr"
 
 REM 구버전(글로벌 룰 / 워크플로우) 정리 대상
 set "OLD_CLAUDE_MD=%USERPROFILE%\.claude\CLAUDE.md"
 set "OLD_CLINE_RULE=%USERPROFILE%\Documents\Cline\Rules\zz-anr-rule.md"
-set "OLD_CLINE_WORKFLOW=%USERPROFILE%\Documents\Cline\Workflows\anr.md"
+set "OLD_CLINE_SKILL=%USERPROFILE%\.cline\skills\anr"
 set "OLD_TOOL_RULE=%USERPROFILE%\.anr-tool\zz-anr-rule.md"
 
 REM --- 0. GitHub 최신 버전 다운로드 -------------------------
@@ -120,9 +120,9 @@ if exist "%OLD_CLINE_RULE%" (
     echo       - 옛 Cline 글로벌 룰 제거
     set "CLEANED=1"
 )
-if exist "%OLD_CLINE_WORKFLOW%" (
-    del /Q "%OLD_CLINE_WORKFLOW%"
-    echo       - 옛 Cline 워크플로우 제거
+if exist "%OLD_CLINE_SKILL%" (
+    rd /S /Q "%OLD_CLINE_SKILL%"
+    echo       - 옛 Cline 스킬 폴더 제거 ^(.cline\skills\anr^)
     set "CLEANED=1"
 )
 if exist "%OLD_CLAUDE_MD%" (
@@ -140,30 +140,32 @@ if exist "%OLD_TOOL_RULE%" (
     set "CLEANED=1"
 )
 REM 옛 Cursor state.vscdb 마커 블록 제거 (Python 있을 때만)
-if defined PYTHON (
-    set "CURSOR_PY=%TEMP%\anr_cursor_cleanup.py"
-    > "!CURSOR_PY!" echo import os, sys, sqlite3, re
-    >> "!CURSOR_PY!" echo db_path = os.path.join(os.environ.get('APPDATA',''), 'Cursor', 'User', 'globalStorage', 'state.vscdb')
-    >> "!CURSOR_PY!" echo if not os.path.isfile(db_path): sys.exit(1)
-    >> "!CURSOR_PY!" echo START = '^<!-- ANR-TOOL-START --^>'; END = '^<!-- ANR-TOOL-END --^>'
-    >> "!CURSOR_PY!" echo try:
-    >> "!CURSOR_PY!" echo     conn = sqlite3.connect(db_path); cur = conn.cursor()
-    >> "!CURSOR_PY!" echo     cur.execute("SELECT value FROM ItemTable WHERE key='aicontext.personalContext'")
-    >> "!CURSOR_PY!" echo     row = cur.fetchone()
-    >> "!CURSOR_PY!" echo     if not row: conn.close(); sys.exit(1)
-    >> "!CURSOR_PY!" echo     pattern = re.compile(re.escape(START) + '.*?' + re.escape(END), re.DOTALL)
-    >> "!CURSOR_PY!" echo     if pattern.search(row[0]):
-    >> "!CURSOR_PY!" echo         cur.execute("UPDATE ItemTable SET value=? WHERE key='aicontext.personalContext'", (pattern.sub('', row[0]).strip(),))
-    >> "!CURSOR_PY!" echo         conn.commit(); conn.close(); sys.exit(0)
-    >> "!CURSOR_PY!" echo     conn.close(); sys.exit(1)
-    >> "!CURSOR_PY!" echo except Exception: sys.exit(1)
-    %PYTHON% "!CURSOR_PY!" >nul 2>&1
-    if !errorlevel!==0 (
-        echo       - 옛 Cursor 전역 룰 블록 제거 ^(state.vscdb^)
-        set "CLEANED=1"
-    )
-    del /q "!CURSOR_PY!" >nul 2>&1
+REM   주의: 아래 echo 줄에 이스케이프 안 된 괄호가 있어, if(...) 괄호 블록으로
+REM   감싸면 cmd 파서가 블록을 조기 종료해 크래시한다. goto 가드로 평문 처리한다.
+if not defined PYTHON goto AFTER_CURSOR_CLEAN
+set "CURSOR_PY=%TEMP%\anr_cursor_cleanup.py"
+> "!CURSOR_PY!" echo import os, sys, sqlite3, re
+>> "!CURSOR_PY!" echo db_path = os.path.join(os.environ.get('APPDATA',''), 'Cursor', 'User', 'globalStorage', 'state.vscdb')
+>> "!CURSOR_PY!" echo if not os.path.isfile(db_path): sys.exit(1)
+>> "!CURSOR_PY!" echo START = '^<!-- ANR-TOOL-START --^>'; END = '^<!-- ANR-TOOL-END --^>'
+>> "!CURSOR_PY!" echo try:
+>> "!CURSOR_PY!" echo     conn = sqlite3.connect(db_path); cur = conn.cursor()
+>> "!CURSOR_PY!" echo     cur.execute("SELECT value FROM ItemTable WHERE key='aicontext.personalContext'")
+>> "!CURSOR_PY!" echo     row = cur.fetchone()
+>> "!CURSOR_PY!" echo     if not row: conn.close(); sys.exit(1)
+>> "!CURSOR_PY!" echo     pattern = re.compile(re.escape(START) + '.*?' + re.escape(END), re.DOTALL)
+>> "!CURSOR_PY!" echo     if pattern.search(row[0]):
+>> "!CURSOR_PY!" echo         cur.execute("UPDATE ItemTable SET value=? WHERE key='aicontext.personalContext'", (pattern.sub('', row[0]).strip(),))
+>> "!CURSOR_PY!" echo         conn.commit(); conn.close(); sys.exit(0)
+>> "!CURSOR_PY!" echo     conn.close(); sys.exit(1)
+>> "!CURSOR_PY!" echo except Exception: sys.exit(1)
+%PYTHON% "!CURSOR_PY!" >nul 2>&1
+if !errorlevel!==0 (
+    echo       - 옛 Cursor 전역 룰 블록 제거 ^(state.vscdb^)
+    set "CLEANED=1"
 )
+del /q "!CURSOR_PY!" >nul 2>&1
+:AFTER_CURSOR_CLEAN
 if "!CLEANED!"=="0" echo       OK: 정리할 구버전 없음
 echo.
 
@@ -192,11 +194,11 @@ if !errorlevel! neq 0 (
 echo       OK
 echo.
 
-REM --- 5. Cline 스킬 배치 ------------------------------------
-echo [5/6] Cline /anr 스킬 배치  ^(룰 v%RULE_VER%^)
-echo       위치: %CLINE_SKILL_DIR%\SKILL.md
-if not exist "%CLINE_SKILL_DIR%" mkdir "%CLINE_SKILL_DIR%"
-copy /Y "%PAYLOAD%\anr-rule.md" "%CLINE_SKILL_DIR%\SKILL.md" >nul
+REM --- 5. Cline 워크플로우 배치 ------------------------------
+echo [5/6] Cline /anr 워크플로우 배치  ^(룰 v%RULE_VER%^)
+echo       위치: %CLINE_WORKFLOW_DIR%\anr.md
+if not exist "%CLINE_WORKFLOW_DIR%" mkdir "%CLINE_WORKFLOW_DIR%"
+copy /Y "%PAYLOAD%\anr-rule.md" "%CLINE_WORKFLOW_DIR%\anr.md" >nul
 if !errorlevel! neq 0 (
     echo       실패.
     pause & exit /b 1
@@ -243,7 +245,7 @@ echo.
 echo 설치된 위치:
 echo   파서        : %TOOL_DIR%\anr_parse.py
 echo   Claude Code : %CLAUDE_CMDS%\anr.md
-echo   Cline       : %CLINE_SKILL_DIR%\SKILL.md
+echo   Cline       : %CLINE_WORKFLOW_DIR%\anr.md
 echo   Cursor      : %CURSOR_SKILL_DIR%\SKILL.md
 echo.
 echo 제거하려면: %TOOL_DIR%\uninstall.bat 실행

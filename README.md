@@ -48,7 +48,7 @@ curl -fsSL https://raw.githubusercontent.com/kingbeanstone/AOA/main/anr-install.
 | 툴 | `/anr` 파일 위치 | 설치 후 할 일 |
 |----|------------------|-------------|
 | **Claude Code** | `~/.claude/commands/anr.md` | 없음 (새 세션부터 즉시) |
-| **Cline** | `~/.cline/skills/anr/SKILL.md` | VSCode 재시작 |
+| **Cline** | `~/Documents/Cline/Workflows/anr.md` | VSCode 재시작 |
 | **Cursor** | `~/.cursor/skills/anr/SKILL.md` | Cursor 재시작 |
 
 > 세 툴 모두 슬래시 커맨드 / 워크플로우 / 스킬 네이티브 기능을 사용합니다.  

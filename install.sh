@@ -3,7 +3,7 @@
 # Cline / Cursor / Claude Code 공용 — 슬래시 커맨드 / 스킬 방식.
 #   - 파서(anr_parse.py)    → ~/.anr-tool/ (공용)
 #   - Claude Code 슬래시    → ~/.claude/commands/anr.md
-#   - Cline 스킬            → ~/.cline/skills/anr/SKILL.md
+#   - Cline 워크플로우      → ~/Documents/Cline/Workflows/anr.md
 #   - Cursor 스킬           → ~/.cursor/skills/anr/SKILL.md
 # 글로벌 룰 주입 방식이 아니라 사용자가 명시적으로 /anr 호출할 때만 동작.
 # GitHub에서 최신 파일 자동 다운로드 (실패 시 로컬 payload/ 폴백)
@@ -18,14 +18,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 TOOL_DIR="$HOME/.anr-tool"
 CLAUDE_CMDS="$HOME/.claude/commands"
-CLINE_SKILL_DIR="$HOME/.cline/skills/anr"
+CLINE_WORKFLOW_DIR="$HOME/Documents/Cline/Workflows"
 CURSOR_SKILL_DIR="$HOME/.cursor/skills/anr"
 
-# 구버전(글로벌 룰 / 워크플로우) 정리 대상
+# 구버전(글로벌 룰 / 스킬) 정리 대상
 OLD_CLAUDE_MD="$HOME/.claude/CLAUDE.md"
 OLD_CLAUDE_IMPORT="@~/.anr-tool/zz-anr-rule.md"
 OLD_CLINE_RULE="$HOME/Documents/Cline/Rules/zz-anr-rule.md"
-OLD_CLINE_WORKFLOW="$HOME/Documents/Cline/Workflows/anr.md"
+OLD_CLINE_SKILL="$HOME/.cline/skills/anr"
 OLD_TOOL_RULE="$HOME/.anr-tool/zz-anr-rule.md"
 
 SKIP_DL=0
@@ -108,9 +108,9 @@ if [ -f "$OLD_CLINE_RULE" ]; then
     echo "      - 옛 Cline 글로벌 룰 제거: $OLD_CLINE_RULE"
     CLEANED=1
 fi
-if [ -f "$OLD_CLINE_WORKFLOW" ]; then
-    rm -f "$OLD_CLINE_WORKFLOW"
-    echo "      - 옛 Cline 워크플로우 제거: $OLD_CLINE_WORKFLOW"
+if [ -d "$OLD_CLINE_SKILL" ]; then
+    rm -rf "$OLD_CLINE_SKILL"
+    echo "      - 옛 Cline 스킬 폴더 제거: $OLD_CLINE_SKILL"
     CLEANED=1
 fi
 if [ -f "$OLD_CLAUDE_MD" ] && grep -qF "$OLD_CLAUDE_IMPORT" "$OLD_CLAUDE_MD"; then
@@ -188,11 +188,11 @@ cp "$PAYLOAD_SRC/anr-rule.md" "$CLAUDE_CMDS/anr.md"
 echo "      OK"
 echo ""
 
-# 5. Cline — ~/.cline/skills/anr/SKILL.md 배치 (스킬)
-echo "[5/6] Cline /anr 스킬 배치  (룰 v${RULE_VER})"
-echo "      위치: $CLINE_SKILL_DIR/SKILL.md"
-mkdir -p "$CLINE_SKILL_DIR"
-cp "$PAYLOAD_SRC/anr-rule.md" "$CLINE_SKILL_DIR/SKILL.md"
+# 5. Cline — ~/Documents/Cline/Workflows/anr.md 배치 (워크플로우)
+echo "[5/6] Cline /anr 워크플로우 배치  (룰 v${RULE_VER})"
+echo "      위치: $CLINE_WORKFLOW_DIR/anr.md"
+mkdir -p "$CLINE_WORKFLOW_DIR"
+cp "$PAYLOAD_SRC/anr-rule.md" "$CLINE_WORKFLOW_DIR/anr.md"
 echo "      OK"
 echo ""
 
@@ -231,7 +231,7 @@ echo ""
 echo "설치된 위치:"
 echo "  파서        : $TOOL_DIR/anr_parse.py"
 echo "  Claude Code : $CLAUDE_CMDS/anr.md"
-echo "  Cline       : $CLINE_SKILL_DIR/SKILL.md"
+echo "  Cline       : $CLINE_WORKFLOW_DIR/anr.md"
 echo "  Cursor      : $CURSOR_SKILL_DIR/SKILL.md"
 echo ""
 echo "제거하려면: bash $TOOL_DIR/uninstall.sh"
