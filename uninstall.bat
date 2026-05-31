@@ -7,18 +7,25 @@ echo.
 
 set "TOOL_DIR=%USERPROFILE%\.anr-tool"
 set "CLAUDE_CMD=%USERPROFILE%\.claude\commands\anr.md"
-set "CLINE_WORKFLOW=%USERPROFILE%\Documents\Cline\Workflows\anr.md"
+set "CLINE_SKILL_DIR=%USERPROFILE%\.cline\skills\anr"
 set "CURSOR_SKILL_DIR=%USERPROFILE%\.cursor\skills\anr"
 
 REM 구버전
 set "OLD_CLAUDE_MD=%USERPROFILE%\.claude\CLAUDE.md"
 set "OLD_CLINE_RULE=%USERPROFILE%\Documents\Cline\Rules\zz-anr-rule.md"
+set "OLD_CLINE_WORKFLOW=%USERPROFILE%\Documents\Cline\Workflows\anr.md"
 
 REM 1. Claude Code 슬래시 커맨드
 if exist "%CLAUDE_CMD%" del /Q "%CLAUDE_CMD%" && echo   Claude Code /anr 커맨드 제거
 
-REM 2. Cline 워크플로우
-if exist "%CLINE_WORKFLOW%" del /Q "%CLINE_WORKFLOW%" && echo   Cline /anr 워크플로우 제거
+REM 2. Cline 스킬
+if exist "%CLINE_SKILL_DIR%" (
+    rd /s /q "%CLINE_SKILL_DIR%"
+    echo   Cline /anr 스킬 제거
+)
+
+REM 2-b. 구버전 Cline 워크플로우 잔재
+if exist "%OLD_CLINE_WORKFLOW%" del /Q "%OLD_CLINE_WORKFLOW%" && echo   옛 Cline 워크플로우 제거
 
 REM 3. Cursor 스킬
 if exist "%CURSOR_SKILL_DIR%" (
@@ -26,8 +33,9 @@ if exist "%CURSOR_SKILL_DIR%" (
     echo   Cursor /anr 스킬 제거
 )
 
-REM 4. 구버전 — Cline 글로벌 룰
+REM 4. 구버전 — Cline 글로벌 룰 / 워크플로우
 if exist "%OLD_CLINE_RULE%" del /Q "%OLD_CLINE_RULE%" && echo   옛 Cline 글로벌 룰 제거
+if exist "%OLD_CLINE_WORKFLOW%" del /Q "%OLD_CLINE_WORKFLOW%" && echo   옛 Cline 워크플로우 제거
 
 REM 5. 구버전 — Claude Code import 한 줄
 if exist "%OLD_CLAUDE_MD%" (

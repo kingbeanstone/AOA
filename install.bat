@@ -5,10 +5,10 @@ setlocal enabledelayedexpansion
 
 REM ============================================================
 REM   ANR 분석 도구 설치 스크립트 (Windows)
-REM   Cline / Cursor / Claude Code 공용 — 슬래시 커맨드 방식.
+REM   Cline / Cursor / Claude Code 공용 — 슬래시 커맨드 / 스킬 방식.
 REM   - 파서(anr_parse.py)    → %USERPROFILE%\.anr-tool\
 REM   - Claude Code 슬래시    → %USERPROFILE%\.claude\commands\anr.md
-REM   - Cline 워크플로우      → %USERPROFILE%\Documents\Cline\Workflows\anr.md
+REM   - Cline 스킬            → %USERPROFILE%\.cline\skills\anr\SKILL.md
 REM   - Cursor 스킬           → %USERPROFILE%\.cursor\skills\anr\SKILL.md
 REM ============================================================
 
@@ -28,12 +28,13 @@ set "TMP_ZIP=%TEMP%\anr-tool-latest.zip"
 set "TMP_DIR=%TEMP%\anr-tool-latest"
 set "TOOL_DIR=%USERPROFILE%\.anr-tool"
 set "CLAUDE_CMDS=%USERPROFILE%\.claude\commands"
-set "CLINE_WORKFLOWS=%USERPROFILE%\Documents\Cline\Workflows"
+set "CLINE_SKILL_DIR=%USERPROFILE%\.cline\skills\anr"
 set "CURSOR_SKILL_DIR=%USERPROFILE%\.cursor\skills\anr"
 
-REM 구버전(글로벌 룰) 정리 대상
+REM 구버전(글로벌 룰 / 워크플로우) 정리 대상
 set "OLD_CLAUDE_MD=%USERPROFILE%\.claude\CLAUDE.md"
 set "OLD_CLINE_RULE=%USERPROFILE%\Documents\Cline\Rules\zz-anr-rule.md"
+set "OLD_CLINE_WORKFLOW=%USERPROFILE%\Documents\Cline\Workflows\anr.md"
 set "OLD_TOOL_RULE=%USERPROFILE%\.anr-tool\zz-anr-rule.md"
 
 REM --- 0. GitHub 최신 버전 다운로드 -------------------------
@@ -111,12 +112,17 @@ for /f "tokens=3 delims= " %%a in ('findstr /B "<!-- 버전:" "%PAYLOAD%\anr-rul
 if not defined PARSER_VER set "PARSER_VER=?"
 if not defined RULE_VER set "RULE_VER=?"
 
-REM --- 2. 구버전(글로벌 룰) 정리 -----------------------------
-echo [2/6] 구버전(글로벌 룰) 정리
+REM --- 2. 구버전(글로벌 룰 / 워크플로우) 정리 -----------------
+echo [2/6] 구버전(글로벌 룰/워크플로우) 정리
 set "CLEANED=0"
 if exist "%OLD_CLINE_RULE%" (
     del /Q "%OLD_CLINE_RULE%"
     echo       - 옛 Cline 글로벌 룰 제거
+    set "CLEANED=1"
+)
+if exist "%OLD_CLINE_WORKFLOW%" (
+    del /Q "%OLD_CLINE_WORKFLOW%"
+    echo       - 옛 Cline 워크플로우 제거
     set "CLEANED=1"
 )
 if exist "%OLD_CLAUDE_MD%" (
@@ -186,13 +192,13 @@ if !errorlevel! neq 0 (
 echo       OK
 echo.
 
-REM --- 5. Cline 워크플로우 배치 ------------------------------
-echo [5/6] Cline /anr 워크플로우 배치  ^(룰 v%RULE_VER%^)
-echo       위치: %CLINE_WORKFLOWS%\anr.md
-if not exist "%CLINE_WORKFLOWS%" mkdir "%CLINE_WORKFLOWS%"
-copy /Y "%PAYLOAD%\anr-rule.md" "%CLINE_WORKFLOWS%\anr.md" >nul
+REM --- 5. Cline 스킬 배치 ------------------------------------
+echo [5/6] Cline /anr 스킬 배치  ^(룰 v%RULE_VER%^)
+echo       위치: %CLINE_SKILL_DIR%\SKILL.md
+if not exist "%CLINE_SKILL_DIR%" mkdir "%CLINE_SKILL_DIR%"
+copy /Y "%PAYLOAD%\anr-rule.md" "%CLINE_SKILL_DIR%\SKILL.md" >nul
 if !errorlevel! neq 0 (
-    echo       실패. Documents 폴더 쓰기 권한 확인 필요.
+    echo       실패.
     pause & exit /b 1
 )
 echo       OK
@@ -237,7 +243,7 @@ echo.
 echo 설치된 위치:
 echo   파서        : %TOOL_DIR%\anr_parse.py
 echo   Claude Code : %CLAUDE_CMDS%\anr.md
-echo   Cline       : %CLINE_WORKFLOWS%\anr.md
+echo   Cline       : %CLINE_SKILL_DIR%\SKILL.md
 echo   Cursor      : %CURSOR_SKILL_DIR%\SKILL.md
 echo.
 echo 제거하려면: %TOOL_DIR%\uninstall.bat 실행
