@@ -1,6 +1,6 @@
 ﻿@echo off
+chcp 65001 > nul
 set "ARG1=%~1"
-if /I not "%ARG1%"=="skip" chcp 65001 > nul
 setlocal enabledelayedexpansion
 
 REM ============================================================
@@ -240,7 +240,7 @@ echo      /anr "C:\My Logs\dump.txt"
 echo      ^(Cline 에서는 슬래시 메뉴에 /anr.md 로 표시됩니다^)
 echo.
 echo   - Claude Code: 새 세션부터 즉시 사용 가능
-echo   - Cline      : VSCode 재시작 후 사용 ^(/anr.md^)
+echo   - Cline      : VSCode 재시작 후 사용
 echo   - Cursor     : Cursor 재시작 후 사용
 echo.
 echo 설치된 위치:
