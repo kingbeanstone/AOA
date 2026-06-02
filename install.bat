@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 chcp 65001 > nul
 set "ARG1=%~1"
 setlocal enabledelayedexpansion
@@ -239,9 +239,9 @@ echo      /anr C:\path\to\dumpstate.txt
 echo      /anr "C:\My Logs\dump.txt"
 echo      ^(Cline 에서는 슬래시 메뉴에 /anr.md 로 표시됩니다^)
 echo.
-echo   - Claude Code: 새 세션부터 즉시 사용 가능
-echo   - Cline      : VSCode 재시작 후 사용
-echo   - Cursor     : Cursor 재시작 후 사용
+echo   - Claude Code: nothing to do
+echo   - Cline      : restart VSCode
+echo   - Cursor     : restart Cursor
 echo.
 echo 설치된 위치:
 echo   파서        : %TOOL_DIR%\anr_parse.py
