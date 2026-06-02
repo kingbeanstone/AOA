@@ -60,7 +60,7 @@ import sys
 from datetime import datetime as _dt
 from typing import Optional
 
-__version__ = "1.29"
+__version__ = "1.34"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1005,11 +1005,10 @@ def extract_logcat_window(path: str, window_before: int = 180) -> str:
 # [5] ANR-3분 ~ ANR 시점 ANR 패키지 로그
 # ──────────────────────────────────────────────────────────────────────────────
 
-def extract_pre_freeze_log(path: str, lookback: int = 180) -> str:
+def extract_pre_freeze_log(path: str, lookback: int = 180, compress: bool = True) -> str:
     """ANR 시점 기준 lookback초 전부터 ANR 시점까지 ANR 패키지 로그 추출.
-    1차 분석의 안정적인 베이스라인 — 가설 없이 항상 동일 기준으로 본다.
-    가설 검증(wallpaper 의심 등)은 -k 키워드 2차 분석을 사용한다.
-    출력은 섹션 4 와 같은 태그별 부하 요약 (시간 흐름은 뭉개지지만 토큰 절약)."""
+    compress=True(기본): 태그별 부하 요약 (토큰 절약).
+    compress=False (-nc5 플래그): 연속 동일 태그 압축만 적용 — 시간 흐름 보존."""
     pid, proc = _last_anr_info(path)
     if proc is None:
         return "(ANR 프로세스 정보 없음)"
@@ -1048,16 +1047,19 @@ def extract_pre_freeze_log(path: str, lookback: int = 180) -> str:
     raw_count = len(out_lines)
     out_lines, dropped = _filter_pre_freeze_tags(out_lines)
     out_lines = _aggregate_graphics_pipeline(out_lines)
-    # 섹션 4 와 같은 태그별 부하 요약. 시간 흐름은 뭉개지지만 토큰을 크게 줄인다.
-    out_lines = _summarize_by_tag(out_lines)
+    if compress:
+        out_lines = _summarize_by_tag(out_lines)
+    else:
+        out_lines = _collapse_consecutive_same_tag(out_lines)
     out_lines = _truncate_long_lines(out_lines)
 
+    mode_str = "태그별 요약" if compress else "시간순 (-nc5)"
     delay_note = f"  /  ANR 지연: {delay_ms}ms" if delay_ms else ""
     header = (
         f"(ANR 시각: {anr_time_str}{delay_note}  /  "
         f"스캔 범위: ANR-{lookback}s ~ ANR 시점  /  "
         f"매칭: 패키지명 '{proc}' 포함  /  "
-        f"원본 {raw_count}건 → 노이즈 태그 {dropped}건 필터링됨)"
+        f"원본 {raw_count}건 → 노이즈 태그 {dropped}건 필터링됨  /  {mode_str})"
     )
     if not out_lines:
         return f"{header}\n({proc} 관련 로그 없음)"
@@ -1069,10 +1071,9 @@ def extract_pre_freeze_log(path: str, lookback: int = 180) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def extract_keyword_lines(path, keywords, lookback: int = 180):
-    """[5] 1차 분석과 동일한 처리를 키워드 매칭으로 수행 (2차 분석).
-    의도: 1차는 ANR 패키지 기준, 2차는 사용자가 의심하는 관련 프로세스/모듈 기준.
-    매칭 외엔 동일 — ANR-{lookback}s ~ ANR 윈도우, 노이즈 태그 필터, 동일 태그 압축, 라인 절단.
-    키워드는 대소문자 무시."""
+    """[5] 1차 분석과 동일한 윈도우/압축/절단을 키워드 매칭으로 수행 (2차 분석).
+    노이즈 필터는 미적용 — 키워드 지정은 사용자가 그 줄을 보겠다는 의도이므로
+    SurfaceFlinger 등 필터 대상 태그도 키워드로 명시하면 그대로 나온다."""
     anr_ts = None
     anr_time_str = ""
     delay_ms = 0
@@ -1108,8 +1109,7 @@ def extract_keyword_lines(path, keywords, lookback: int = 180):
                 matched.append(line.rstrip())
 
     raw_count = len(matched)
-    matched, dropped = _filter_pre_freeze_tags(matched)
-    matched = _collapse_consecutive_same_tag(matched)
+    # 노이즈 필터·압축 미적용: 키워드 지정은 사용자가 원본 줄을 보겠다는 의도.
     matched = _truncate_long_lines(matched)
 
     delay_note = f"  /  ANR 지연: {delay_ms}ms" if delay_ms else ""
@@ -1117,7 +1117,7 @@ def extract_keyword_lines(path, keywords, lookback: int = 180):
         f"(ANR 시각: {anr_time_str}{delay_note}  /  "
         f"스캔 범위: ANR-{lookback}s ~ ANR 시점  /  "
         f"키워드: {', '.join(keywords)} (대소문자 무시)  /  "
-        f"원본 {raw_count}건 → 노이즈 태그 {dropped}건 필터링됨)"
+        f"원본 {raw_count}건  /  노이즈 필터·압축 미적용)"
     )
     if not matched:
         return f"{header}\n(매칭 라인 없음)"
@@ -1380,25 +1380,47 @@ def _write_sections(dumpstate_path: str, sections, header_title: str, out_path: 
         f.write("\n".join(output_lines))
 
 
-def parse_and_save(dumpstate_path: str) -> Optional[str]:
+def parse_and_save(dumpstate_path: str, compress_5: bool = True,
+                   keywords: list = None) -> Optional[str]:
     dumpstate_path = dumpstate_path.strip().strip('"').strip("'")
     if not os.path.isfile(dumpstate_path):
         print(f"  ⚠ 파일을 찾을 수 없습니다: {dumpstate_path}")
         return None
 
     print(f"\n파싱 중: {os.path.basename(dumpstate_path)}")
+    if not compress_5:
+        print("  [5] 섹션 압축 해제 (-nc5)")
+    if keywords:
+        print(f"  키워드 섹션 추가: {', '.join(keywords)}")
 
     base = os.path.splitext(dumpstate_path)[0]
     main_path = base + "_anr_parsed.txt"
     aux_path  = base + "_anr_crashes.txt"
 
+    # 5섹션만 compress_5 플래그를 받아 동적으로 생성
+    sec5_label = "[5] ANR-3분 로그  (패키지명 기준, ANR-180s ~ ANR)"
+    sec5_fn = (lambda p: extract_pre_freeze_log(p, compress=compress_5))
+    sections_main = SECTIONS_MAIN[:-1] + [(sec5_label, sec5_fn)]
+
     # 1. 분석용 메인 출력 (LLM 이 읽음)
     _write_sections(
         dumpstate_path,
-        SECTIONS_MAIN,
+        sections_main,
         "ANR 파싱 결과 (분석용)",
         main_path,
     )
+
+    # 키워드 섹션이 있으면 _anr_parsed.txt 뒤에 붙임
+    if keywords:
+        with open(main_path, "a", encoding="utf-8") as f:
+            for kw in keywords:
+                f.write(f"\n{SEP}\n[K] 키워드: {kw}\n{SEP}\n")
+                try:
+                    f.write(extract_keyword_lines(dumpstate_path, [kw]))
+                except Exception as e:
+                    f.write(f"(오류: {e})")
+                f.write("\n")
+                print(f"  ✓ [K] 키워드: {kw}")
 
     # 2. 참고용 부록 출력 (사용자 참고용 — LLM 은 읽지 않음)
     _write_sections(
@@ -1449,32 +1471,39 @@ def keyword_search_and_save(dumpstate_path, keywords):
 
 
 def _parse_args(args):
-    """sys.argv 파싱. (path, keywords) 반환.
-    경로에 공백이 있어도 따옴표 없이 받을 수 있도록 플래그 외 토큰은 합친다."""
+    """sys.argv 파싱. (path, keywords, compress_5) 반환.
+    경로에 공백이 있어도 따옴표 없이 받을 수 있도록 플래그 외 토큰은 합친다.
+    -nc5         : 5섹션 압축 해제 — 태그별 요약 대신 시간순 연속 압축 사용.
+    -k a b c     : 여러 키워드를 한 번에 지정 (공백 구분). 다음 플래그(-로 시작)까지가 키워드.
+    -k a -k b    : 기존 형식도 그대로 지원."""
     keywords = []
     path_parts = []
+    compress_5 = True
     i = 0
     while i < len(args):
         a = args[i]
-        if a in ("-k", "--keyword") and i + 1 < len(args):
-            keywords.append(args[i + 1]); i += 2
+        if a in ("-k", "--keyword"):
+            i += 1
+            # 다음 플래그(-로 시작)가 나올 때까지 키워드로 수집
+            while i < len(args) and not args[i].startswith("-"):
+                keywords.append(args[i]); i += 1
+        elif a == "-nc5":
+            compress_5 = False; i += 1
         else:
             path_parts.append(a); i += 1
-    return " ".join(path_parts), keywords
+    return " ".join(path_parts), keywords, compress_5
 
 
 def main():
     if len(sys.argv) > 1:
-        path, keywords = _parse_args(sys.argv[1:])
-        if keywords:
-            keyword_search_and_save(path, keywords)
-        else:
-            parse_and_save(path)
+        path, keywords, compress_5 = _parse_args(sys.argv[1:])
+        parse_and_save(path, compress_5=compress_5, keywords=keywords)
         return
 
     print("=" * 50)
     print(f"ANR dumpstate 파서  v{__version__}")
     print("dumpstate 파일을 드래그하거나 경로를 입력하세요.")
+    print("플래그: -k <키워드>  /  -nc5 (5섹션 압축 해제)")
     print("종료: exit")
     print("=" * 50)
 
@@ -1486,7 +1515,8 @@ def main():
             break
         if not raw or raw.lower() in ("exit", "quit"):
             break
-        parse_and_save(raw)
+        path_interactive, keywords_interactive, compress_5 = _parse_args(raw.split())
+        parse_and_save(path_interactive, compress_5=compress_5, keywords=keywords_interactive)
 
 
 if __name__ == "__main__":
