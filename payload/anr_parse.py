@@ -11,7 +11,7 @@ dumpstate 파일에서 ANR 관련 섹션을 추출해 두 개의 텍스트 파�
   [1] am_anr       — logcat am_anr 이벤트
   [2] ANR in       — ActivityManager ANR 헤더 + CPU 사용량 + PSI 메모리
   [3] VM traces    — VM TRACES AT LAST ANR 스레드 덤프
-  [4] 부근 logcat  — ANR-180s ~ ANR 시점 키워드 (GC/System/Render/IO)
+  [4] 부근 logcat  — ANR-180s ~ ANR 시점 키워드 (GC/System/Render/IO/Binder)
   [5] ANR-3분 로그 — ANR-180s ~ ANR 시점 ANR 패키지 관련 로그
 
 출력 파일 2: <원본>_anr_crashes.txt  (참고용 — ANR 분석에 사용하지 않음)
@@ -60,7 +60,7 @@ import sys
 from datetime import datetime as _dt
 from typing import Optional
 
-__version__ = "1.35"
+__version__ = "1.39"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -668,13 +668,11 @@ _ANR_DIRECT_TAGS = frozenset({
 _ANR_DIRECT_TAIL = 10  # 보존할 최근 줄 수
 
 
-def _summarize_by_tag(lines, top_n: int = 5, min_total: int = 6):
+def _summarize_by_tag(lines, top_n: int = 5, min_total: int = 6,
+                      anr_direct: bool = True):
     """카테고리(4섹션 GC/System/IO 등)를 태그별 부하 요약으로 축약.
-    - ANR 직접 관련 태그(_ANR_DIRECT_TAGS): 최근 _ANR_DIRECT_TAIL 줄 보존.
-      (시간 흐름이 중요하므로 마지막 1줄만 남기지 않음)
-    - 나머지 태그: 마지막 1줄 + 건수.
-    - GPU 단서(avgGpuLoad/Davey!/GPUFreqMax 등)는 집계 없이 그대로 보존.
-    줄 수가 min_total 미만이면 원본 유지."""
+    anr_direct=True(기본, 5섹션용): ANR 직접 관련 태그는 최근 tail 줄 보존.
+    anr_direct=False(4섹션용): 모든 태그 마지막 1줄만 — 부하량 요약 목적."""
     taggable = [l for l in lines if _logcat_tag(l) is not None]
     if len(taggable) < min_total:
         return lines
@@ -716,7 +714,7 @@ def _summarize_by_tag(lines, top_n: int = 5, min_total: int = 6):
     for tag, s in ranked:
         cnt = s["count"]
         tag_lines = s["lines"]
-        if tag in _ANR_DIRECT_TAGS:
+        if anr_direct and tag in _ANR_DIRECT_TAGS:
             tail = tag_lines[-_ANR_DIRECT_TAIL:]
             omitted = cnt - len(tail)
             out.append(f"    {tag} ×{cnt}")
@@ -930,6 +928,17 @@ _RENDER_KW = [
     "setStopped",       # HardwareRenderer 블로킹 지점
     "present fence",    # GPU sync 상태
 ]
+_BINDER_KW = [
+    "Binder timeout",
+    "transaction failed",
+    "too many pending",
+    "oneway transaction",
+    "binder call to",
+    "Binder thread pool",
+    "Lost service",
+    "Binder invocation to an incorrect interface",
+    "binder died",
+]
 _IO_KW = [
     "I/O error", "Slow operation", "fsync", "storage", "SQLite",
     "database is locked", "disk full", "read blocked", "write blocked",
@@ -945,10 +954,11 @@ _GC_RE     = _kw_re(_GC_KW)
 _SYSTEM_RE = _kw_re(_SYSTEM_KW)
 _RENDER_RE = _kw_re(_RENDER_KW)
 _IO_RE     = _kw_re(_IO_KW)
+_BINDER_RE = _kw_re(_BINDER_KW)
 
 
 def extract_logcat_window(path: str, window_before: int = 180) -> str:
-    """ANR 시점 기준 logcat 에서 GC/System/Render/IO 키워드 수집.
+    """ANR 시점 기준 logcat 에서 GC/System/Render/IO/Binder 키워드 수집.
     카테고리별 부하 요약. ANR 이전 구간만 본다 (ANR 이후는 노이즈라 제외)."""
     anr_ts = None
     for line in _read_logcat_lines(path):
@@ -960,8 +970,9 @@ def extract_logcat_window(path: str, window_before: int = 180) -> str:
     t_start = (anr_ts - window_before) if anr_ts else None
     t_end   = anr_ts  # ANR 시점까지만
 
-    found = {"GC": [], "System": [], "Render": [], "IO": []}
-    cat_res = {"GC": _GC_RE, "System": _SYSTEM_RE, "Render": _RENDER_RE, "IO": _IO_RE}
+    found = {"GC": [], "System": [], "Render": [], "IO": [], "Binder": []}
+    cat_res = {"GC": _GC_RE, "System": _SYSTEM_RE, "Render": _RENDER_RE,
+               "IO": _IO_RE, "Binder": _BINDER_RE}
     MAX = 20000
     in_window = (anr_ts is None)
 
@@ -1011,7 +1022,7 @@ def extract_logcat_window(path: str, window_before: int = 180) -> str:
                 # 그래픽 폭증을 frameNumber 추이 + 단서 보존으로 먼저 접고,
                 lines = _aggregate_graphics_pipeline(lines)
             # 모든 카테고리를 태그별 부하 요약으로 축약 (흐름 아님, 부하량만).
-            lines = _summarize_by_tag(lines)
+            lines = _summarize_by_tag(lines, anr_direct=False)
             parts.extend(_truncate_long_lines(lines))
 
     if not has_any:
@@ -1051,11 +1062,27 @@ def extract_pre_freeze_log(path: str, lookback: int = 180, compress: bool = True
     if anr_ts is None:
         return "(ANR 타임스탬프 추출 실패)"
 
-    # freeze 시각 = ANR 탐지 시각 - 지연 시간
-    # 이 시각이 실제 UI 스레드가 멈춘 시점에 더 가깝다.
-    freeze_ts = anr_ts - (delay_ms / 1000.0) if delay_ms else anr_ts
+    # freeze 시각: WindowManager "ANR in Window" 로그에서 추출.
+    # am_anr 이후 60초 이내에서 가장 가까운 것을 찾는다 (여러 ANR 시 짝 맞춤).
+    # 못 찾으면 am_anr - delay_ms 로 계산.
+    freeze_ts = None
+    _WM_ANR_RE = re.compile(r"WindowManager.*ANR in Window", re.IGNORECASE)
+    for line in _read_logcat_lines(path):
+        if not _WM_ANR_RE.search(line):
+            continue
+        ts = _logcat_ts(line)
+        if ts is None:
+            continue
+        # 마지막 am_anr 시각 기준 ±60초 이내의 마지막 것을 선택
+        if abs(ts - anr_ts) <= 60:
+            freeze_ts = ts
+
+    if freeze_ts is None:
+        # fallback: am_anr - 지연시간
+        freeze_ts = anr_ts - (delay_ms / 1000.0) if delay_ms else anr_ts
+
     t_start = freeze_ts - lookback
-    t_end   = anr_ts
+    t_end   = freeze_ts  # WM ANR in Window 시각 기준 (am_anr 아님)
 
     def _ts_to_hms(ts_float):
         """누적 초 → HH:MM:SS.mmm 문자열 (날짜 무시, 시각만)"""
@@ -1086,11 +1113,12 @@ def extract_pre_freeze_log(path: str, lookback: int = 180, compress: bool = True
         out_lines = _collapse_consecutive_same_tag(out_lines)
     out_lines = _truncate_long_lines(out_lines)
 
+    freeze_src = "WindowManager ANR in Window" if abs(freeze_ts - (anr_ts - delay_ms/1000.0 if delay_ms else anr_ts)) > 0.1 else "am_anr-지연"
     mode_str = "태그별 요약" if compress else "시간순 (-nc5)"
     delay_note = f"  /  ANR 지연: {delay_ms}ms" if delay_ms else ""
     header = (
         f"(ANR 시각: {anr_time_str}{delay_note}  /  "
-        f"스캔 범위: {t_start_str} ~ {t_end_str}  /  "
+        f"스캔 범위: {t_start_str} ~ {t_end_str}  [{freeze_src} 기준]  /  "
         f"매칭: 패키지명 '{proc}' 포함  /  "
         f"원본 {raw_count}건 → 노이즈 태그 {dropped}건 필터링됨  /  {mode_str})"
     )
