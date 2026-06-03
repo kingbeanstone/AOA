@@ -60,7 +60,7 @@ import sys
 from datetime import datetime as _dt
 from typing import Optional
 
-__version__ = "1.34"
+__version__ = "1.35"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -652,28 +652,36 @@ def _aggregate_graphics_pipeline(lines, top_n: int = 3):
     return out
 
 
+# ANR 분석에서 시간 흐름이 중요한 태그들.
+# 이 태그들은 마지막 1줄 대신 최근 _ANR_DIRECT_TAIL 줄을 보존한다.
+# 건수가 그 이하면 전부 보존, 넘으면 "이전 N건" 표시 + 최근 N줄.
+_ANR_DIRECT_TAGS = frozenset({
+    "am_anr", "am_proc_died", "am_proc_start", "am_proc_bound",
+    "ActivityManager", "ActivityTaskManager",
+    "InputDispatcher", "InputReader",
+    "WindowManager",
+    "Looper",
+    "dvm_lock_sample",
+    "ActivityThread",
+    "system_server",
+})
+_ANR_DIRECT_TAIL = 10  # 보존할 최근 줄 수
+
+
 def _summarize_by_tag(lines, top_n: int = 5, min_total: int = 6):
     """카테고리(4섹션 GC/System/IO 등)를 태그별 부하 요약으로 축약.
-    이벤트 흐름이 아니라 '어느 태그가 얼마나 찍혔는지'만 본다.
-    - 태그별 건수 집계, 태그별 마지막 줄 1개만 남김.
-    - 모든 태그에 대해 마지막 줄 1개를 남김 (시간 기준점 보존).
-    - 건수 많은 순으로 정렬.
-    - GPU hang 단서 줄(avgGpuLoad/Davey!)은 집계하지 않고 그대로 보존한다.
-    - 이미 만들어진 그래픽 요약 블록(들여쓰기 줄)이나 태그 없는 줄도 그대로 통과.
-    줄 수가 min_total 미만이면 압축 이득이 없으므로 원본 유지."""
+    - ANR 직접 관련 태그(_ANR_DIRECT_TAGS): 최근 _ANR_DIRECT_TAIL 줄 보존.
+      (시간 흐름이 중요하므로 마지막 1줄만 남기지 않음)
+    - 나머지 태그: 마지막 1줄 + 건수.
+    - GPU 단서(avgGpuLoad/Davey!/GPUFreqMax 등)는 집계 없이 그대로 보존.
+    줄 수가 min_total 미만이면 원본 유지."""
     taggable = [l for l in lines if _logcat_tag(l) is not None]
     if len(taggable) < min_total:
         return lines
 
-    # 통과 줄: 태그 없는 줄(요약 블록 등)은 그대로,
-    # GPU 단서 줄(avgGpuLoad/Davey!/GPUFreqMax/SIOP_GPU 등)은
-    # (태그, 단서 종류) 단위로 마지막 1줄만 보존한다.
-    # (단서 종류는 _GFX_CLUE_RE 가 매칭한 토큰을 소문자로 정규화.
-    #  태그 단위로만 dedupe 하면 SDHMS 안의 GPUFreqMax 줄이 SDHMS 의 다른
-    #  단서 줄에 덮어써져 사라지는 문제가 있다.)
     plain_passthrough = [l for l in lines if _logcat_tag(l) is None]
-    clue_last = {}   # (tag, kind) -> 마지막 줄
-    clue_count = {}  # (tag, kind) -> 건수
+    clue_last = {}
+    clue_count = {}
     for l in lines:
         if _logcat_tag(l) is None:
             continue
@@ -686,27 +694,38 @@ def _summarize_by_tag(lines, top_n: int = 5, min_total: int = 6):
         clue_last[key] = l
         clue_count[key] = clue_count.get(key, 0) + 1
 
-    stats = {}  # tag -> {"count", "last"}
+    # 태그별: 줄 목록 전체 보관 (ANR 직접 태그는 tail 필요)
+    stats = {}  # tag -> {"count", "lines": [...]}
     for l in lines:
         tag = _logcat_tag(l)
         if tag is None or _GFX_CLUE_RE.search(l):
-            continue  # 단서 줄은 집계에서 제외 (보존)
+            continue
         if tag not in stats:
-            stats[tag] = {"count": 0, "last": l}
+            stats[tag] = {"count": 0, "lines": []}
         stats[tag]["count"] += 1
-        stats[tag]["last"] = l
+        stats[tag]["lines"].append(l)
 
     ranked = sorted(stats.items(), key=lambda kv: kv[1]["count"], reverse=True)
-    out = list(plain_passthrough)  # 요약 블록 등 통과
-    # GPU 단서 먼저(눈에 띄게): (태그, 단서 종류) 단위로 마지막 줄 + 건수
+    out = list(plain_passthrough)
+    # GPU 단서 먼저
     for (tag, kind), last in clue_last.items():
         cnt = clue_count[(tag, kind)]
         suffix = f"  ({kind} ×{cnt})" if cnt > 1 else f"  ({kind})"
         out.append(f"    [GPU 단서]{suffix}")
         out.append(f"      {last}")
     for tag, s in ranked:
-        out.append(f"    {tag} ×{s['count']}")
-        out.append(f"      (마지막) {s['last']}")
+        cnt = s["count"]
+        tag_lines = s["lines"]
+        if tag in _ANR_DIRECT_TAGS:
+            tail = tag_lines[-_ANR_DIRECT_TAIL:]
+            omitted = cnt - len(tail)
+            out.append(f"    {tag} ×{cnt}")
+            if omitted > 0:
+                out.append(f"      … (이전 {omitted}건 생략)")
+            out.extend(f"      {l}" for l in tail)
+        else:
+            out.append(f"    {tag} ×{cnt}")
+            out.append(f"      (마지막) {tag_lines[-1]}")
     return out
 
 
@@ -1032,8 +1051,22 @@ def extract_pre_freeze_log(path: str, lookback: int = 180, compress: bool = True
     if anr_ts is None:
         return "(ANR 타임스탬프 추출 실패)"
 
-    t_start = anr_ts - lookback
+    # freeze 시각 = ANR 탐지 시각 - 지연 시간
+    # 이 시각이 실제 UI 스레드가 멈춘 시점에 더 가깝다.
+    freeze_ts = anr_ts - (delay_ms / 1000.0) if delay_ms else anr_ts
+    t_start = freeze_ts - lookback
     t_end   = anr_ts
+
+    def _ts_to_hms(ts_float):
+        """누적 초 → HH:MM:SS.mmm 문자열 (날짜 무시, 시각만)"""
+        total_sec = ts_float % 86400
+        h = int(total_sec // 3600)
+        m = int((total_sec % 3600) // 60)
+        s = total_sec % 60
+        return f"{h:02d}:{m:02d}:{s:06.3f}"
+
+    t_start_str = _ts_to_hms(t_start)
+    t_end_str   = _ts_to_hms(t_end)
 
     out_lines = []
     for line in _read_logcat_lines(path):
@@ -1057,7 +1090,7 @@ def extract_pre_freeze_log(path: str, lookback: int = 180, compress: bool = True
     delay_note = f"  /  ANR 지연: {delay_ms}ms" if delay_ms else ""
     header = (
         f"(ANR 시각: {anr_time_str}{delay_note}  /  "
-        f"스캔 범위: ANR-{lookback}s ~ ANR 시점  /  "
+        f"스캔 범위: {t_start_str} ~ {t_end_str}  /  "
         f"매칭: 패키지명 '{proc}' 포함  /  "
         f"원본 {raw_count}건 → 노이즈 태그 {dropped}건 필터링됨  /  {mode_str})"
     )
