@@ -24,7 +24,11 @@
 curl -fsSL https://raw.githubusercontent.com/kingbeanstone/AOA/main/anr-install.sh | bash
 ```
 
-> curl이 없으면: `wget -qO- <위 URL> | bash`
+> curl이 없으면:
+>
+> ```bash
+> wget -qO- https://raw.githubusercontent.com/kingbeanstone/AOA/main/anr-install.sh | bash
+> ```
 
 > **오프라인 환경** — GitHub 연결에 실패하면 스크립트와 같은 폴더의
 > `payload/` 폴더에서 자동으로 폴백합니다.
