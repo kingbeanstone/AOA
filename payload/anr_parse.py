@@ -60,7 +60,7 @@ import sys
 from datetime import datetime as _dt
 from typing import Optional
 
-__version__ = "1.40"
+__version__ = "1.41"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -638,7 +638,7 @@ def _aggregate_graphics_pipeline(lines, top_n: int = 3):
             span = (f"  {s['tmin_s'][6:]}~{s['tmax_s'][6:]} "
                     f"({dur:.0f}초간 {s['count']}건, ~{rate:.0f}/s)")
         block.append(f"    {tag} ×{s['count']}{trend}{span}")
-        block.append(f"      (마지막) {s['last']}")
+        block.append(f"      {s['last']}")
 
     out = []
     inserted = False
@@ -723,7 +723,7 @@ def _summarize_by_tag(lines, top_n: int = 5, min_total: int = 6,
             out.extend(f"      {l}" for l in tail)
         else:
             out.append(f"    {tag} ×{cnt}")
-            out.append(f"      (마지막) {tag_lines[-1]}")
+            out.append(f"      {tag_lines[-1]}")
     return out
 
 
