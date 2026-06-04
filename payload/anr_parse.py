@@ -12,7 +12,7 @@ dumpstate 파일에서 ANR 관련 섹션을 추출해 두 개의 텍스트 파�
   [2] ANR in       — ActivityManager ANR 헤더 + CPU 사용량 + PSI 메모리
   [3] VM traces    — VM TRACES AT LAST ANR 스레드 덤프
   [4] 부근 logcat  — ANR-180s ~ ANR 시점 키워드 (GC/System/Render/IO/Binder)
-  [5] ANR-3분 로그 — ANR-180s ~ ANR 시점 ANR 패키지 관련 로그
+  [5] ANR-30s 로그 — ANR-30s ~ ANR 시점 ANR 패키지 관련 로그
 
 출력 파일 2: <원본>_anr_crashes.txt  (참고용 — ANR 분석에 사용하지 않음)
   [A] Crash 기록   — Java / native crash / TOMBSTONE (파일 전체 스캔)
@@ -38,14 +38,14 @@ dumpstate 파일에서 ANR 관련 섹션을 추출해 두 개의 텍스트 파�
   SDHMS(삼성 PID 컨트롤러) 는 GPU·온도 스로틀링 시그널이 필요해서
   필터에서 빼고 압축에만 맡긴다.
 
-* ANR-3분 로그 ([5], v1.9~):
-  ANR 시점 300초 전부터 ANR 시점까지 ANR 패키지명이 포함된 로그를 추출한다.
+* ANR-30s 로그 ([5], v1.40~):
+  ANR 시점 30초 전부터 ANR 시점까지 ANR 패키지명이 포함된 로그를 추출한다.
   1차 분석의 안정적인 베이스라인 — 가설 없이 항상 동일한 기준으로 본다.
 
 * 키워드 2차 분석 (-k, v1.7~):
   python anr_parse.py "<덤프>" -k <키워드> [-k <키워드2> ...]
   1차 분석은 ANR 패키지 기준, 2차는 사용자가 의심하는 관련 프로세스/모듈 키워드 기준.
-  매칭 조건만 다르고 처리(윈도우 ANR-180s, 노이즈 필터, 압축, 라인 절단)는 1차와 동일.
+  매칭 조건만 다르고 처리(윈도우 ANR-30s, 노이즈 필터, 압축, 라인 절단)는 1차와 동일.
   결과는 <원본>_anr_keyword_<키워드>.txt 로 저장된다 (1차 결과 보존).
   예) 1차에서 wallpaper 가 GPU 과점한 흔적이 보이면 → -k wallpaper 로 검증.
       노이즈 필터에 걸리는 태그 자체를 보고 싶다면 → -k BLASTBufferQueue 등.
@@ -60,7 +60,7 @@ import sys
 from datetime import datetime as _dt
 from typing import Optional
 
-__version__ = "1.39"
+__version__ = "1.40"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -856,6 +856,14 @@ _WM_KEEP_PATTERN = re.compile(
     r"finishDrawingWindow|removeWindowToken|onRemovedFromDisplay"
 )
 
+# ActivityManager 는 ANR 분석에 중요한 신호(Process died, Killing, ANR in, Force-finishing 등)와
+# 무관한 잡로그(manifest 등록, broadcast dispatch 등)가 섞여 있음.
+# 같은 메시지가 4건 이상씩 반복되는 잡로그만 메시지 패턴으로 골라서 버린다.
+_AM_DROP_PATTERN = re.compile(
+    r"Skipping manifest|"
+    r"Sending no-protected broadcast"
+)
+
 # HWUI 는 보통 노이즈지만 Davey! (프레임 1500ms+ 지연 시그널) 은 매우 중요.
 # UI 스레드가 오래 멈췄다는 직접 증거라서 ANR 분석의 핵심 단서가 된다.
 _HWUI_KEEP_PATTERN = re.compile(r"Davey")
@@ -880,6 +888,10 @@ def _should_drop_pre_freeze(tag: str, message: str) -> bool:
     # HWUI 는 Davey! 같은 jank 시그널만 유지하고 나머지는 버린다
     if tag == "HWUI":
         if not _HWUI_KEEP_PATTERN.search(message):
+            return True
+    # ActivityManager 는 알려진 잡로그 패턴만 버리고 나머지는 유지
+    if tag == "ActivityManager":
+        if _AM_DROP_PATTERN.search(message):
             return True
     return False
 
@@ -1032,10 +1044,10 @@ def extract_logcat_window(path: str, window_before: int = 180) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# [5] ANR-3분 ~ ANR 시점 ANR 패키지 로그
+# [5] ANR-30s ~ ANR 시점 ANR 패키지 로그
 # ──────────────────────────────────────────────────────────────────────────────
 
-def extract_pre_freeze_log(path: str, lookback: int = 180, compress: bool = True) -> str:
+def extract_pre_freeze_log(path: str, lookback: int = 30, compress: bool = True) -> str:
     """ANR 시점 기준 lookback초 전부터 ANR 시점까지 ANR 패키지 로그 추출.
     compress=True(기본): 태그별 부하 요약 (토큰 절약).
     compress=False (-nc5 플래그): 연속 동일 태그 압축만 적용 — 시간 흐름 보존."""
@@ -1131,7 +1143,7 @@ def extract_pre_freeze_log(path: str, lookback: int = 180, compress: bool = True
 # 키워드 2차 분석 — 덤프 전체에서 특정 키워드 포함 라인 추출
 # ──────────────────────────────────────────────────────────────────────────────
 
-def extract_keyword_lines(path, keywords, lookback: int = 180):
+def extract_keyword_lines(path, keywords, lookback: int = 30):
     """[5] 1차 분석과 동일한 윈도우/압축/절단을 키워드 매칭으로 수행 (2차 분석).
     노이즈 필터는 미적용 — 키워드 지정은 사용자가 그 줄을 보겠다는 의도이므로
     SurfaceFlinger 등 필터 대상 태그도 키워드로 명시하면 그대로 나온다."""
@@ -1409,7 +1421,7 @@ SECTIONS_MAIN = [
     ("[2] ANR in  (ActivityManager 섹션)",          extract_anr_in),
     ("[3] VM TRACES AT LAST ANR  (스레드 덤프)",   extract_vm_traces),
     ("[4] ANR 부근 logcat 키워드  (ANR-180s ~ ANR 시점)",  extract_logcat_window),
-    ("[5] ANR-3분 로그  (패키지명 기준, ANR-180s ~ ANR)", extract_pre_freeze_log),
+    ("[5] ANR-30s 로그  (패키지명 기준, ANR-30s ~ ANR)", extract_pre_freeze_log),
 ]
 
 # 참고용 — _anr_crashes.txt 에 별도 저장됨 (ANR 분석에 사용하지 않음)
@@ -1459,7 +1471,7 @@ def parse_and_save(dumpstate_path: str, compress_5: bool = True,
     aux_path  = base + "_anr_crashes.txt"
 
     # 5섹션만 compress_5 플래그를 받아 동적으로 생성
-    sec5_label = "[5] ANR-3분 로그  (패키지명 기준, ANR-180s ~ ANR)"
+    sec5_label = "[5] ANR-30s 로그  (패키지명 기준, ANR-30s ~ ANR)"
     sec5_fn = (lambda p: extract_pre_freeze_log(p, compress=compress_5))
     sections_main = SECTIONS_MAIN[:-1] + [(sec5_label, sec5_fn)]
 
